@@ -60,10 +60,20 @@ open class NoteRepository(
         val notes = mutableListOf<Note>()
         for (doc in trash.listFiles()) {
             if (!doc.isFile || doc.name?.endsWith(".md", true) != true) continue
-            val text = saf.readText(doc.uri)
             val fileName = doc.name ?: ""
-            val meta = extractMeta(doc.uri.toString(), trash.uri.toString(), fileName, text, doc.lastModified())
-            notes += Note.fromMeta(meta).copy(title = titleFromFileName(fileName))
+            val mtime = doc.lastModified()
+            // Fast path: title from filename + mtime only, no file read.
+            // Previews in the trash are not shown, so reading bodies here is wasted I/O.
+            notes += Note(
+                path = doc.uri.toString(),
+                parent = trash.uri.toString(),
+                title = titleFromFileName(fileName),
+                preview = "",
+                modifiedMillis = mtime,
+                createdMillis = mtime,
+                tags = emptyList(),
+                label = null,
+            )
         }
         notes.sortedWith(stableDisplayDesc)
     }

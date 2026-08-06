@@ -775,9 +775,11 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
     }
 
     fun openTrash() {
+        // Navigate immediately so the screen opens without waiting for SAF I/O.
+        _ui.update { it.copy(screen = Screen.TRASH) }
         viewModelScope.launch {
             val notes = repo.refreshTrash()
-            _ui.update { it.copy(screen = Screen.TRASH, trashNotes = notes) }
+            _ui.update { it.copy(trashNotes = notes) }
         }
     }
 
