@@ -11,7 +11,6 @@ object MdColors {
     val OnSurfaceDim   = Color(0xFFA0A0A0)
     val OnSurfaceFaint = Color(0xFF6B6B6B)
     val Accent         = Color(0xFF8AB4F8)
-    val AccentDim      = Color(0xFF5184D6)
     val Divider        = Color(0x14FFFFFF)
     val LabelChipBg    = Color(0xFF2D3950)
     val LabelChipFg    = Color(0xFFB0C8F0)

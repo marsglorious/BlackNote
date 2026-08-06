@@ -31,29 +31,6 @@ data class Note(
     fun toMeta() = NoteMeta(path, parent, title, preview, modifiedMillis, createdMillis, tags, label)
 }
 
-sealed class TreeEntry {
-    abstract val path: String
-    abstract val parent: String
-    abstract val name: String
-    abstract val depth: Int
-
-    data class FolderEntry(
-        override val path: String,
-        override val parent: String,
-        override val name: String,
-        override val depth: Int,
-        val noteCount: Int,
-    ) : TreeEntry()
-
-    data class NoteEntry(
-        override val path: String,
-        override val parent: String,
-        override val name: String,
-        override val depth: Int,
-        val note: Note,
-    ) : TreeEntry()
-}
-
 /**
  * Folder name we move deleted notes into. Plain "Trash" (no dot) — Samsung's
  * ExternalStorageProvider and several others silently fail to create dot-prefixed

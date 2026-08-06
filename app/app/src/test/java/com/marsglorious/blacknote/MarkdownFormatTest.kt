@@ -144,6 +144,44 @@ class MarkdownFormatTest {
         assertEquals("- one\n\n- two", r.text)
     }
 
+    // --- Cursor-on-blank-line bug: tapping list with cursor on an empty line did nothing ---
+
+    @Test
+    fun bulletList_onEmptyBody_startsItem() {
+        val r = MarkdownFormat.apply("", 0, 0, FormatKind.BULLET_LIST)
+        assertEquals("- ", r.text)
+    }
+
+    @Test
+    fun orderedList_onEmptyBody_startsItem() {
+        val r = MarkdownFormat.apply("", 0, 0, FormatKind.ORDERED_LIST)
+        assertEquals("1. ", r.text)
+    }
+
+    @Test
+    fun bulletList_cursorOnBlankLineAtEnd_startsItem() {
+        // User types a line, presses Enter, then taps the list button on the new blank line.
+        val text = "hello\n"
+        val r = MarkdownFormat.apply(text, text.length, text.length, FormatKind.BULLET_LIST)
+        assertEquals("hello\n- ", r.text)
+    }
+
+    @Test
+    fun orderedList_cursorOnBlankLineAtEnd_startsItem() {
+        val text = "hello\n"
+        val r = MarkdownFormat.apply(text, text.length, text.length, FormatKind.ORDERED_LIST)
+        assertEquals("hello\n1. ", r.text)
+    }
+
+    @Test
+    fun bulletList_cursorOnBlankLineInMiddle_startsItem() {
+        // Cursor is on the empty line between two paragraphs.
+        val text = "above\n\nbelow"
+        val blankPos = text.indexOf('\n') + 1   // index 6, the blank line
+        val r = MarkdownFormat.apply(text, blankPos, blankPos, FormatKind.BULLET_LIST)
+        assertEquals("above\n- \nbelow", r.text)
+    }
+
     @Test
     fun outOfRangeOffsetsAreClamped() {
         val r = MarkdownFormat.apply("ab", 0, 99, FormatKind.BOLD)

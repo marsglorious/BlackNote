@@ -3,10 +3,8 @@ package com.marsglorious.blacknote.data
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
-import com.marsglorious.blacknote.ffi.FuzzyResult
 import com.marsglorious.blacknote.ffi.SearchIndex
 import com.marsglorious.blacknote.ffi.extractMeta
-import com.marsglorious.blacknote.ffi.fuzzySearch
 import com.marsglorious.blacknote.ffi.searchNotes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -128,16 +126,6 @@ open class NoteRepository(
                 searchNotes(fallback.map { it.toMeta() }, q, limit.toUInt())
                     .map { Note.fromMeta(it) }
             }
-        }
-
-    /**
-     * Fuzzy (subsequence) search à la VS Code Quick Open. Returns each hit with the
-     * character offsets in title and preview that the query matched, so the UI can
-     * highlight them.
-     */
-    suspend fun fuzzy(query: String, candidates: List<Note>, limit: Int = 200): List<FuzzyResult> =
-        withContext(Dispatchers.Default) {
-            fuzzySearch(candidates.map { it.toMeta() }, query, limit.toUInt())
         }
 
     open suspend fun read(path: String): String? = withContext(Dispatchers.IO) {

@@ -1,8 +1,10 @@
 package com.marsglorious.blacknote.ui.editor
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,20 +21,24 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marsglorious.blacknote.ui.theme.MdColors
 import com.marsglorious.blacknote.viewmodel.AppViewModel
 import com.marsglorious.blacknote.viewmodel.EditorMode
 import com.marsglorious.blacknote.viewmodel.UiState
+import kotlinx.coroutines.delay
 
 @Composable
 fun EditorScreen(state: UiState, viewModel: AppViewModel, onBack: () -> Unit) {
@@ -142,24 +148,56 @@ private fun TitleField(value: TextFieldValue, onChange: (TextFieldValue) -> Unit
 private fun BodyField(value: TextFieldValue, onChange: (TextFieldValue) -> Unit, modifier: Modifier = Modifier) {
     val scroll = rememberScrollState()
     val styler = remember { MarkdownVisualTransformation() }
-    Box(
-        modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .verticalScroll(scroll)
-    ) {
-        BasicTextField(
-            value = value,
-            onValueChange = onChange,
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = MdColors.OnSurface),
-            cursorBrush = SolidColor(MdColors.Accent),
-            visualTransformation = styler,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp).testTag("editor_body"),
-        )
-        if (value.text.isEmpty()) {
-            Text(
-                "Start writing in Markdown…",
-                style = MaterialTheme.typography.bodyLarge.copy(color = MdColors.OnSurfaceFaint),
+    Box(modifier.fillMaxWidth()) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .verticalScroll(scroll)
+        ) {
+            BasicTextField(
+                value = value,
+                onValueChange = onChange,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = MdColors.OnSurface),
+                cursorBrush = SolidColor(MdColors.Accent),
+                visualTransformation = styler,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp).testTag("editor_body"),
+            )
+            if (value.text.isEmpty()) {
+                Text(
+                    "Start writing in Markdown…",
+                    style = MaterialTheme.typography.bodyLarge.copy(color = MdColors.OnSurfaceFaint),
+                )
+            }
+        }
+        EditorScrollIndicator(scroll, Modifier.align(Alignment.TopEnd))
+    }
+}
+
+@Composable
+private fun EditorScrollIndicator(scroll: ScrollState, modifier: Modifier) {
+    val alpha = remember { Animatable(0f) }
+    LaunchedEffect(scroll.value) {
+        alpha.animateTo(1f, tween(80))
+        delay(1200)
+        alpha.animateTo(0f, tween(360))
+    }
+    if (scroll.maxValue > 0) {
+        BoxWithConstraints(modifier.width(14.dp).fillMaxHeight()) {
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            val viewportPx = constraints.maxHeight.toFloat()
+            val contentPx = viewportPx + scroll.maxValue
+            val minThumbPx = with(density) { 40.dp.toPx() }
+            val thumbPx = (viewportPx * viewportPx / contentPx).coerceAtLeast(minThumbPx)
+            val thumbY = (scroll.value.toFloat() / scroll.maxValue) * (viewportPx - thumbPx)
+            Box(
+                Modifier
+                    .offset { IntOffset(0, thumbY.toInt()) }
+                    .width(5.dp)
+                    .height(with(density) { thumbPx.toDp() })
+                    .clip(RoundedCornerShape(50))
+                    .background(MdColors.OnSurfaceDim.copy(alpha = alpha.value * 0.95f))
+                    .align(Alignment.TopEnd)
             )
         }
     }

@@ -91,7 +91,11 @@ object MarkdownFormat {
         var counter = 1
         val newLines = lines.map { line ->
             when {
-                line.isBlank() -> line
+                // Leave blank lines unchanged only when other non-blank lines exist in the
+                // selection — that preserves paragraph gaps in multi-line list toggling.
+                // A single blank line (cursor-only on an empty line) must still receive the
+                // prefix so the user can start a list item on an empty line.
+                line.isBlank() && lines.size > 1 -> line
                 allPrefixed -> stripPrefix(line) ?: line
                 else -> {
                     // Re-prefixing: replace an existing list marker of the other kind.

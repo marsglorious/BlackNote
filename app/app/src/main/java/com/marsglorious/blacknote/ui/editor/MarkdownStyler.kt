@@ -51,10 +51,26 @@ fun renderMarkdown(src: String, onWikiLink: ((String) -> Unit)? = null): Annotat
     AnnotatedString.Builder().apply {
         val lines = src.split('\n')
         var firstOut = true
+        var inCodeFence = false
         for (raw in lines) {
+            if (raw.trimStart().startsWith("```")) {
+                inCodeFence = !inCodeFence
+                // Don't emit fence markers — content flows seamlessly
+                continue
+            }
             if (!firstOut) append('\n')
             firstOut = false
-            renderLine(raw, onWikiLink)
+            if (inCodeFence) {
+                val start = length
+                append(raw)
+                addStyle(
+                    SpanStyle(fontFamily = FontFamily.Monospace, background = MdColors.SurfaceHi2,
+                        fontSize = 13.sp),
+                    start, length,
+                )
+            } else {
+                renderLine(raw, onWikiLink)
+            }
         }
     }.toAnnotatedString()
 
@@ -354,8 +370,11 @@ private fun AnnotatedString.Builder.applyInlinePairs(src: String, marker: String
         if (a == -1) return
         if (marker == "*" && (a + 1 < src.length && src[a + 1] == '*')) { i = a + 2; continue }
         if (marker == "_" && (a + 1 < src.length && src[a + 1] == '_')) { i = a + 2; continue }
-        val b = src.indexOf(marker, a + markerLen)
-        if (b == -1) return
+        // Search for the closing marker only within the same line — inline formatting
+        // must not span across newlines or it eats the rest of the document.
+        val lineEnd = src.indexOf('\n', a).let { if (it == -1) src.length else it }
+        val b = src.indexOf(marker, a + markerLen).takeIf { it != -1 && it < lineEnd }
+        if (b == null) { i = lineEnd + 1; continue }
         if (b - a - markerLen <= 0) { i = b + markerLen; continue }
         addStyle(SpanStyle(color = MdColors.OnSurfaceFaint), a, a + markerLen)
         addStyle(inner, a + markerLen, b)

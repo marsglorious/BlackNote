@@ -16,7 +16,6 @@ import com.marsglorious.blacknote.data.NoteRepository
 import com.marsglorious.blacknote.data.TreeSnapshot
 import com.marsglorious.blacknote.data.stableDisplayDesc
 import com.marsglorious.blacknote.ffi.FormatKind
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,7 +23,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 enum class Screen { LIST, EDITOR, TRASH, SETTINGS }
 enum class ListViewMode { LIST, COLLAGE }

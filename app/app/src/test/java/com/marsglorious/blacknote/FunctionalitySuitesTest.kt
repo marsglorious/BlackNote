@@ -12,10 +12,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class FunctionalitySuitesTest {
-    init {
-        // Allow JNA to load host built libblacknote.so for FFI calls in tests
-        System.setProperty("jna.library.path", "/root/BlackNote/rust-core/target/release")
-    }
     private fun sampleNotes() = listOf(
         Note("p1", "root", "Delete Test", "body", 1, 0, emptyList(), null),
         Note("p2", "root", "Move Test", "move body", 2, 0, emptyList(), null),
