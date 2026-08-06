@@ -64,7 +64,7 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        jniLibs.useLegacyPackaging = false
+        jniLibs.useLegacyPackaging = true
     }
     installation {
         timeOutInMs = 120000
@@ -85,7 +85,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.datastore:datastore-preferences:1.0.0")
-    implementation("androidx.graphics:graphics-path:1.1.0")
+    implementation("androidx.graphics:graphics-path:1.2.0")
     implementation("net.java.dev.jna:jna:5.19.1@aar")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
