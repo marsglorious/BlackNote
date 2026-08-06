@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# final_export — publish the freshest signed APK to /var/www/downloads.
+#
+# Contract for future iterations / agents:
+#   * After ANY successful build of BlackNote, run this script.
+#   * Do NOT cp the APK manually. This script is the single source of truth.
+#   * It exits non-zero on any failure (missing APK, copy error, perms).
+#
+# Behavior:
+#   1. Locates the freshest *.apk under app/app/build/outputs/apk/
+#   2. Atomic-copies it to /var/www/downloads/blacknote.apk
+#   3. Also writes a versioned snapshot blacknote-<version>-<sha>.apk
+#   4. Sets mode 0644
+#   5. Prints the public install URL
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APK_SEARCH_ROOT="${PROJECT_ROOT}/app/app/build/outputs/apk"
+PUBLISH_DIR="/var/www/downloads"
+STABLE_NAME="blacknote.apk"
+
+log()  { printf '\033[1;36m[final_export]\033[0m %s\n' "$*"; }
+fail() { printf '\033[1;31m[final_export FAIL]\033[0m %s\n' "$*" >&2; exit 1; }
+
+[[ -d "${APK_SEARCH_ROOT}" ]] || fail "no build output at ${APK_SEARCH_ROOT} — build the app first"
+[[ -d "${PUBLISH_DIR}"     ]] || fail "publish dir missing: ${PUBLISH_DIR}"
+[[ -w "${PUBLISH_DIR}"     ]] || fail "publish dir not writable: ${PUBLISH_DIR} (need sudo?)"
+
+# Prefer release, fall back to debug
+APK=""
+for variant in release debug; do
+    CAND="$(find "${APK_SEARCH_ROOT}/${variant}" -maxdepth 2 -type f -name '*.apk' \
+              -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2- || true)"
+    if [[ -n "${CAND}" ]]; then APK="${CAND}"; break; fi
+done
+[[ -n "${APK}" ]] || fail "no APK found under ${APK_SEARCH_ROOT}"
+log "source APK: ${APK}"
+
+# Pull version + git sha (best effort)
+VERSION="$(grep -E 'versionName\s*=' "${PROJECT_ROOT}/app/app/build.gradle.kts" 2>/dev/null \
+            | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || true)"
+[[ -n "${VERSION}" ]] || VERSION="0.0.0"
+SHA="$(git -C "${PROJECT_ROOT}" rev-parse --short HEAD 2>/dev/null || echo nogit)"
+SNAPSHOT_NAME="blacknote-${VERSION}-${SHA}.apk"
+
+# Atomic publish — write to tempfile on the SAME filesystem, then mv
+TMP="$(mktemp -p "${PUBLISH_DIR}" .blacknote.XXXXXX.apk)"
+trap 'rm -f "${TMP}"' EXIT
+cp -f "${APK}" "${TMP}"
+chmod 0644 "${TMP}"
+mv -f "${TMP}" "${PUBLISH_DIR}/${STABLE_NAME}"
+cp -f "${PUBLISH_DIR}/${STABLE_NAME}" "${PUBLISH_DIR}/${SNAPSHOT_NAME}"
+chmod 0644 "${PUBLISH_DIR}/${SNAPSHOT_NAME}"
+trap - EXIT
+
+SIZE="$(du -h "${PUBLISH_DIR}/${STABLE_NAME}" | cut -f1)"
+log "published: ${PUBLISH_DIR}/${STABLE_NAME} (${SIZE})"
+log "snapshot : ${PUBLISH_DIR}/${SNAPSHOT_NAME}"
+log "install URL (replace <host>): https://<host>/downloads/${STABLE_NAME}"
