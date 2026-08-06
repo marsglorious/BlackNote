@@ -632,9 +632,60 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
     }
 
     fun onBodyChange(b: TextFieldValue) {
-        history.record(EditorSnapshot(_ui.value.editingTitle, b))
-        _ui.update { it.copy(editingBody = b, canUndo = history.canUndo, canRedo = history.canRedo) }
+        val next = continueList(b) ?: b
+        history.record(EditorSnapshot(_ui.value.editingTitle, next))
+        _ui.update { it.copy(editingBody = next, canUndo = history.canUndo, canRedo = history.canRedo) }
         scheduleSave()
+    }
+
+    /**
+     * When the user presses Enter at the end of a list item, automatically start
+     * the next item. On an empty item, pressing Enter exits the list instead.
+     * Returns a modified TextFieldValue, or null if no list continuation applies.
+     */
+    private fun continueList(new: TextFieldValue): TextFieldValue? {
+        if (!new.selection.collapsed) return null
+        val cursor = new.selection.start
+        if (cursor == 0 || new.text.getOrNull(cursor - 1) != '\n') return null
+        // Only act on single-character insertions (the newline itself).
+        val old = _ui.value.editingBody
+        if (new.text.length - old.text.length != 1) return null
+
+        // Find the line that was just ended.
+        val lineEnd = cursor - 1
+        val lineStart = (new.text.lastIndexOf('\n', lineEnd - 1) + 1).coerceAtLeast(0)
+        val prevLine = new.text.substring(lineStart, lineEnd)
+
+        // Bullet list: "- content"
+        if (prevLine.startsWith("- ")) {
+            val content = prevLine.removePrefix("- ")
+            return if (content.isBlank()) {
+                // Empty item → exit list: remove "- " and the newline we just added.
+                val text = new.text.substring(0, lineStart) + new.text.substring(cursor)
+                TextFieldValue(text, androidx.compose.ui.text.TextRange(lineStart))
+            } else {
+                val text = new.text.substring(0, cursor) + "- " + new.text.substring(cursor)
+                TextFieldValue(text, androidx.compose.ui.text.TextRange(cursor + 2))
+            }
+        }
+
+        // Ordered list: "N. content"
+        var k = 0
+        while (k < prevLine.length && prevLine[k].isDigit()) k++
+        if (k > 0 && prevLine.startsWith(". ", k)) {
+            val num = prevLine.substring(0, k).toIntOrNull() ?: return null
+            val content = prevLine.substring(k + 2)
+            return if (content.isBlank()) {
+                val text = new.text.substring(0, lineStart) + new.text.substring(cursor)
+                TextFieldValue(text, androidx.compose.ui.text.TextRange(lineStart))
+            } else {
+                val marker = "${num + 1}. "
+                val text = new.text.substring(0, cursor) + marker + new.text.substring(cursor)
+                TextFieldValue(text, androidx.compose.ui.text.TextRange(cursor + marker.length))
+            }
+        }
+
+        return null
     }
 
     fun undo() {

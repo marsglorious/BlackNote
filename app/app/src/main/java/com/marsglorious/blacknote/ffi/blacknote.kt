@@ -67,14 +67,14 @@ open class RustBuffer : Structure() {
         }
 
         internal fun create(capacity: ULong, len: ULong, data: Pointer?): RustBuffer.ByValue {
-            var buf = RustBuffer.ByValue()
+            var buf = ByValue()
             buf.capacity = capacity.toLong()
             buf.len = len.toLong()
             buf.data = data
             return buf
         }
 
-        internal fun free(buf: RustBuffer.ByValue) = uniffiRustCall() { status ->
+        internal fun free(buf: ByValue) = uniffiRustCall { status ->
             UniffiLib.INSTANCE.ffi_blacknote_rustbuffer_free(buf, status)
         }
     }
@@ -84,40 +84,6 @@ open class RustBuffer : Structure() {
         this.data?.getByteBuffer(0, this.len.toLong())?.also {
             it.order(ByteOrder.BIG_ENDIAN)
         }
-}
-
-/**
- * The equivalent of the `*mut RustBuffer` type.
- * Required for callbacks taking in an out pointer.
- *
- * Size is the sum of all values in the struct.
- *
- * @suppress
- */
-class RustBufferByReference : ByReference(16) {
-    /**
-     * Set the pointed-to `RustBuffer` to the given value.
-     */
-    fun setValue(value: RustBuffer.ByValue) {
-        // NOTE: The offsets are as they are in the C-like struct.
-        val pointer = getPointer()
-        pointer.setLong(0, value.capacity)
-        pointer.setLong(8, value.len)
-        pointer.setPointer(16, value.data)
-    }
-
-    /**
-     * Get a `RustBuffer.ByValue` from this reference.
-     */
-    fun getValue(): RustBuffer.ByValue {
-        val pointer = getPointer()
-        val value = RustBuffer.ByValue()
-        value.writeField("capacity", pointer.getLong(0))
-        value.writeField("len", pointer.getLong(8))
-        value.writeField("data", pointer.getLong(16))
-
-        return value
-    }
 }
 
 // This is a helper for safely passing byte references into the rust code.
@@ -771,13 +737,9 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_blacknote_fn_method_searchindex_upsert(`ptr`: Pointer,`path`: RustBuffer.ByValue,`parent`: RustBuffer.ByValue,`title`: RustBuffer.ByValue,`body`: RustBuffer.ByValue,`label`: RustBuffer.ByValue,`tags`: RustBuffer.ByValue,`modifiedMillis`: Long,`createdMillis`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    fun uniffi_blacknote_fn_func_apply_format(`src`: RustBuffer.ByValue,`selStart`: Int,`selEnd`: Int,`kind`: RustBuffer.ByValue,`on`: Byte,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
     fun uniffi_blacknote_fn_func_extract_meta(`path`: RustBuffer.ByValue,`parent`: RustBuffer.ByValue,`fileName`: RustBuffer.ByValue,`text`: RustBuffer.ByValue,`modifiedMillis`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_blacknote_fn_func_fuzzy_search(`notes`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    fun uniffi_blacknote_fn_func_parse_markdown(`src`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_blacknote_fn_func_search_notes(`notes`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -893,13 +855,9 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_blacknote_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    fun uniffi_blacknote_checksum_func_apply_format(
-    ): Short
     fun uniffi_blacknote_checksum_func_extract_meta(
     ): Short
     fun uniffi_blacknote_checksum_func_fuzzy_search(
-    ): Short
-    fun uniffi_blacknote_checksum_func_parse_markdown(
     ): Short
     fun uniffi_blacknote_checksum_func_search_notes(
     ): Short
@@ -932,16 +890,10 @@ private fun uniffiCheckContractApiVersion(lib: UniffiLib) {
 
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: UniffiLib) {
-    if (lib.uniffi_blacknote_checksum_func_apply_format() != 17309.toShort()) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
     if (lib.uniffi_blacknote_checksum_func_extract_meta() != 60676.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_blacknote_checksum_func_fuzzy_search() != 8750.toShort()) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_blacknote_checksum_func_parse_markdown() != 35911.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_blacknote_checksum_func_search_notes() != 41188.toShort()) {
@@ -1615,78 +1567,6 @@ public object FfiConverterTypeNoteMeta: FfiConverterRustBuffer<NoteMeta> {
             FfiConverterOptionalString.write(value.`label`, buf)
     }
 }
-
-
-
-data class ParsedDoc (
-    var `plain`: kotlin.String, 
-    var `spans`: List<StyledSpan>
-) {
-    
-    companion object
-}
-
-/**
- * @suppress
- */
-public object FfiConverterTypeParsedDoc: FfiConverterRustBuffer<ParsedDoc> {
-    override fun read(buf: ByteBuffer): ParsedDoc {
-        return ParsedDoc(
-            FfiConverterString.read(buf),
-            FfiConverterSequenceTypeStyledSpan.read(buf),
-        )
-    }
-
-    override fun allocationSize(value: ParsedDoc) = (
-            FfiConverterString.allocationSize(value.`plain`) +
-            FfiConverterSequenceTypeStyledSpan.allocationSize(value.`spans`)
-    )
-
-    override fun write(value: ParsedDoc, buf: ByteBuffer) {
-            FfiConverterString.write(value.`plain`, buf)
-            FfiConverterSequenceTypeStyledSpan.write(value.`spans`, buf)
-    }
-}
-
-
-
-data class StyledSpan (
-    var `start`: kotlin.UInt, 
-    var `end`: kotlin.UInt, 
-    var `style`: SpanStyle
-) {
-    
-    companion object
-}
-
-/**
- * @suppress
- */
-public object FfiConverterTypeStyledSpan: FfiConverterRustBuffer<StyledSpan> {
-    override fun read(buf: ByteBuffer): StyledSpan {
-        return StyledSpan(
-            FfiConverterUInt.read(buf),
-            FfiConverterUInt.read(buf),
-            FfiConverterTypeSpanStyle.read(buf),
-        )
-    }
-
-    override fun allocationSize(value: StyledSpan) = (
-            FfiConverterUInt.allocationSize(value.`start`) +
-            FfiConverterUInt.allocationSize(value.`end`) +
-            FfiConverterTypeSpanStyle.allocationSize(value.`style`)
-    )
-
-    override fun write(value: StyledSpan, buf: ByteBuffer) {
-            FfiConverterUInt.write(value.`start`, buf)
-            FfiConverterUInt.write(value.`end`, buf)
-            FfiConverterTypeSpanStyle.write(value.`style`, buf)
-    }
-}
-
-
-
-
 enum class FormatKind {
     
     BOLD,
@@ -1768,200 +1648,6 @@ public object FfiConverterTypeIndexError : FfiConverterRustBuffer<IndexException
 
 }
 
-
-
-sealed class SpanStyle {
-    
-    object Bold : SpanStyle()
-    
-    
-    object Italic : SpanStyle()
-    
-    
-    object Underline : SpanStyle()
-    
-    
-    object Strike : SpanStyle()
-    
-    
-    object Code : SpanStyle()
-    
-    
-    data class Heading(
-        val `level`: kotlin.UByte) : SpanStyle() {
-        companion object
-    }
-    
-    object BulletItem : SpanStyle()
-    
-    
-    data class OrderedItem(
-        val `number`: kotlin.UInt) : SpanStyle() {
-        companion object
-    }
-    
-    data class Link(
-        val `url`: kotlin.String) : SpanStyle() {
-        companion object
-    }
-    
-    object BlockQuote : SpanStyle()
-    
-    
-
-    
-    companion object
-}
-
-/**
- * @suppress
- */
-public object FfiConverterTypeSpanStyle : FfiConverterRustBuffer<SpanStyle>{
-    override fun read(buf: ByteBuffer): SpanStyle {
-        return when(buf.getInt()) {
-            1 -> SpanStyle.Bold
-            2 -> SpanStyle.Italic
-            3 -> SpanStyle.Underline
-            4 -> SpanStyle.Strike
-            5 -> SpanStyle.Code
-            6 -> SpanStyle.Heading(
-                FfiConverterUByte.read(buf),
-                )
-            7 -> SpanStyle.BulletItem
-            8 -> SpanStyle.OrderedItem(
-                FfiConverterUInt.read(buf),
-                )
-            9 -> SpanStyle.Link(
-                FfiConverterString.read(buf),
-                )
-            10 -> SpanStyle.BlockQuote
-            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
-        }
-    }
-
-    override fun allocationSize(value: SpanStyle) = when(value) {
-        is SpanStyle.Bold -> {
-            // Add the size for the Int that specifies the variant plus the size needed for all fields
-            (
-                4UL
-            )
-        }
-        is SpanStyle.Italic -> {
-            // Add the size for the Int that specifies the variant plus the size needed for all fields
-            (
-                4UL
-            )
-        }
-        is SpanStyle.Underline -> {
-            // Add the size for the Int that specifies the variant plus the size needed for all fields
-            (
-                4UL
-            )
-        }
-        is SpanStyle.Strike -> {
-            // Add the size for the Int that specifies the variant plus the size needed for all fields
-            (
-                4UL
-            )
-        }
-        is SpanStyle.Code -> {
-            // Add the size for the Int that specifies the variant plus the size needed for all fields
-            (
-                4UL
-            )
-        }
-        is SpanStyle.Heading -> {
-            // Add the size for the Int that specifies the variant plus the size needed for all fields
-            (
-                4UL
-                + FfiConverterUByte.allocationSize(value.`level`)
-            )
-        }
-        is SpanStyle.BulletItem -> {
-            // Add the size for the Int that specifies the variant plus the size needed for all fields
-            (
-                4UL
-            )
-        }
-        is SpanStyle.OrderedItem -> {
-            // Add the size for the Int that specifies the variant plus the size needed for all fields
-            (
-                4UL
-                + FfiConverterUInt.allocationSize(value.`number`)
-            )
-        }
-        is SpanStyle.Link -> {
-            // Add the size for the Int that specifies the variant plus the size needed for all fields
-            (
-                4UL
-                + FfiConverterString.allocationSize(value.`url`)
-            )
-        }
-        is SpanStyle.BlockQuote -> {
-            // Add the size for the Int that specifies the variant plus the size needed for all fields
-            (
-                4UL
-            )
-        }
-    }
-
-    override fun write(value: SpanStyle, buf: ByteBuffer) {
-        when(value) {
-            is SpanStyle.Bold -> {
-                buf.putInt(1)
-                Unit
-            }
-            is SpanStyle.Italic -> {
-                buf.putInt(2)
-                Unit
-            }
-            is SpanStyle.Underline -> {
-                buf.putInt(3)
-                Unit
-            }
-            is SpanStyle.Strike -> {
-                buf.putInt(4)
-                Unit
-            }
-            is SpanStyle.Code -> {
-                buf.putInt(5)
-                Unit
-            }
-            is SpanStyle.Heading -> {
-                buf.putInt(6)
-                FfiConverterUByte.write(value.`level`, buf)
-                Unit
-            }
-            is SpanStyle.BulletItem -> {
-                buf.putInt(7)
-                Unit
-            }
-            is SpanStyle.OrderedItem -> {
-                buf.putInt(8)
-                FfiConverterUInt.write(value.`number`, buf)
-                Unit
-            }
-            is SpanStyle.Link -> {
-                buf.putInt(9)
-                FfiConverterString.write(value.`url`, buf)
-                Unit
-            }
-            is SpanStyle.BlockQuote -> {
-                buf.putInt(10)
-                Unit
-            }
-        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
-    }
-}
-
-
-
-
-
-
-/**
- * @suppress
- */
 public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
     override fun read(buf: ByteBuffer): kotlin.String? {
         if (buf.get().toInt() == 0) {
@@ -2099,69 +1785,6 @@ public object FfiConverterSequenceTypeNoteMeta: FfiConverterRustBuffer<List<Note
         }
     }
 }
-
-
-
-
-/**
- * @suppress
- */
-public object FfiConverterSequenceTypeStyledSpan: FfiConverterRustBuffer<List<StyledSpan>> {
-    override fun read(buf: ByteBuffer): List<StyledSpan> {
-        val len = buf.getInt()
-        return List<StyledSpan>(len) {
-            FfiConverterTypeStyledSpan.read(buf)
-        }
-    }
-
-    override fun allocationSize(value: List<StyledSpan>): ULong {
-        val sizeForLength = 4UL
-        val sizeForItems = value.map { FfiConverterTypeStyledSpan.allocationSize(it) }.sum()
-        return sizeForLength + sizeForItems
-    }
-
-    override fun write(value: List<StyledSpan>, buf: ByteBuffer) {
-        buf.putInt(value.size)
-        value.iterator().forEach {
-            FfiConverterTypeStyledSpan.write(it, buf)
-        }
-    }
-} fun `applyFormat`(`src`: kotlin.String, `selStart`: kotlin.UInt, `selEnd`: kotlin.UInt, `kind`: FormatKind, `on`: kotlin.Boolean): kotlin.String {
-            return FfiConverterString.lift(
-    uniffiRustCall() { _status ->
-    UniffiLib.INSTANCE.uniffi_blacknote_fn_func_apply_format(
-        FfiConverterString.lower(`src`),FfiConverterUInt.lower(`selStart`),FfiConverterUInt.lower(`selEnd`),FfiConverterTypeFormatKind.lower(`kind`),FfiConverterBoolean.lower(`on`),_status)
-}
-    )
-    }
-    
- fun `extractMeta`(`path`: kotlin.String, `parent`: kotlin.String, `fileName`: kotlin.String, `text`: kotlin.String, `modifiedMillis`: kotlin.Long): NoteMeta {
-            return FfiConverterTypeNoteMeta.lift(
-    uniffiRustCall() { _status ->
-    UniffiLib.INSTANCE.uniffi_blacknote_fn_func_extract_meta(
-        FfiConverterString.lower(`path`),FfiConverterString.lower(`parent`),FfiConverterString.lower(`fileName`),FfiConverterString.lower(`text`),FfiConverterLong.lower(`modifiedMillis`),_status)
-}
-    )
-    }
-    
- fun `fuzzySearch`(`notes`: List<NoteMeta>, `query`: kotlin.String, `limit`: kotlin.UInt): List<FuzzyResult> {
-            return FfiConverterSequenceTypeFuzzyResult.lift(
-    uniffiRustCall() { _status ->
-    UniffiLib.INSTANCE.uniffi_blacknote_fn_func_fuzzy_search(
-        FfiConverterSequenceTypeNoteMeta.lower(`notes`),FfiConverterString.lower(`query`),FfiConverterUInt.lower(`limit`),_status)
-}
-    )
-    }
-    
- fun `parseMarkdown`(`src`: kotlin.String): ParsedDoc {
-            return FfiConverterTypeParsedDoc.lift(
-    uniffiRustCall() { _status ->
-    UniffiLib.INSTANCE.uniffi_blacknote_fn_func_parse_markdown(
-        FfiConverterString.lower(`src`),_status)
-}
-    )
-    }
-    
  fun `searchNotes`(`notes`: List<NoteMeta>, `query`: kotlin.String, `limit`: kotlin.UInt): List<NoteMeta> {
             return FfiConverterSequenceTypeNoteMeta.lift(
     uniffiRustCall() { _status ->
