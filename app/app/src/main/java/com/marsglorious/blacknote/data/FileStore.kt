@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
+import androidx.core.net.toUri
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -87,7 +88,7 @@ open class FileStore(private val ctx: Context) {
     }
 
     private fun safUriToPath(uriString: String): String? =
-        safUriToFilePath(Uri.parse(uriString))
+        safUriToFilePath(uriString.toUri())
 }
 
 /**

@@ -1,6 +1,6 @@
 package com.marsglorious.blacknote
 
-import android.net.Uri
+import androidx.core.net.toUri
 import com.marsglorious.blacknote.data.Note
 import com.marsglorious.blacknote.data.foldersFromNotes
 import com.marsglorious.blacknote.data.safUriToFilePath
@@ -105,7 +105,7 @@ class FileAccessTest {
 
     @Test
     fun safUriToFilePath_convertsInternalStorageUri() {
-        val uri = Uri.parse("content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FBlackNote")
+        val uri = "content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FBlackNote".toUri()
         val path = safUriToFilePath(uri)
         // The "primary" volume resolves under external storage; the exact root differs
         // between device and Robolectric, but the relative part must be appended intact.
@@ -115,14 +115,14 @@ class FileAccessTest {
 
     @Test
     fun safUriToFilePath_returnsNullForSdCard() {
-        val uri = Uri.parse("content://com.android.externalstorage.documents/tree/1234-5678%3ABlackNote")
+        val uri = "content://com.android.externalstorage.documents/tree/1234-5678%3ABlackNote".toUri()
         val path = safUriToFilePath(uri)
         assertNull("SD card URI should return null — not accessible via java.io.File", path)
     }
 
     @Test
     fun safUriToFilePath_returnsNullForCloudStorage() {
-        val uri = Uri.parse("content://com.google.android.apps.docs.storage/document/abc123")
+        val uri = "content://com.google.android.apps.docs.storage/document/abc123".toUri()
         val path = safUriToFilePath(uri)
         assertNull("Cloud storage URI should return null", path)
     }

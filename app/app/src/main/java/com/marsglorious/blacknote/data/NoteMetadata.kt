@@ -124,32 +124,23 @@ private fun parseIsoDate(s: String): Long? {
 
 private fun isLeap(y: Long): Boolean = (y % 4 == 0L && y % 100 != 0L) || (y % 400 == 0L)
 
+// A '#' that is not preceded by a tag character, followed by one or more tag characters
+// (ASCII alphanumerics, '_', '-', '/'). The lookbehind means "word#tag" is not a hashtag.
+private val HASHTAG = Regex("""(?<![A-Za-z0-9_/-])#([A-Za-z0-9_/-]+)""")
+
 private fun extractHashtags(body: String, out: MutableList<String>) {
     for (line in body.lines()) {
-        val stripped = line.trimStart()
-        // Heading line: 1–6 '#' followed by a space — skip so headings aren't read as tags.
-        var hIdx = 0
-        while (hIdx < 6 && hIdx < stripped.length && stripped[hIdx] == '#') hIdx++
-        if (hIdx in 1 until stripped.length && stripped[hIdx] == ' ') continue
-
-        var i = 0
-        while (i < line.length) {
-            val c = line[i]
-            if (c == '#' && (i == 0 || !isWordChar(line[i - 1]))) {
-                val start = i + 1
-                var endIdx = start
-                while (endIdx < line.length && isWordChar(line[endIdx])) endIdx++
-                if (endIdx > start) {
-                    val tag = line.substring(start, endIdx)
-                    if (!tag.all { it in '0'..'9' }) out.add(tag)
-                }
-                i = endIdx
-            } else {
-                i++
-            }
+        if (isHeadingLine(line)) continue
+        for (match in HASHTAG.findAll(line)) {
+            val tag = match.groupValues[1]
+            if (!tag.all { it in '0'..'9' }) out.add(tag) // ignore pure numbers like "#1"
         }
     }
 }
 
-private fun isWordChar(c: Char): Boolean =
-    c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c == '_' || c == '-' || c == '/'
+/** A Markdown heading: 1–6 leading '#' immediately followed by a space. */
+private fun isHeadingLine(line: String): Boolean {
+    val s = line.trimStart()
+    val hashes = s.takeWhile { it == '#' }.length
+    return hashes in 1..6 && s.length > hashes && s[hashes] == ' '
+}

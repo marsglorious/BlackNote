@@ -1,7 +1,6 @@
 package com.marsglorious.blacknote.selftest
 
 import android.content.Context
-import android.net.Uri
 import com.marsglorious.blacknote.data.FileStore
 import com.marsglorious.blacknote.data.Note
 import com.marsglorious.blacknote.data.safUriToFilePath
@@ -11,6 +10,7 @@ import com.marsglorious.blacknote.data.titleFromFileName
 import com.marsglorious.blacknote.viewmodel.SortMode
 import com.marsglorious.blacknote.viewmodel.noteComparator
 import java.io.File
+import androidx.core.net.toUri
 
 /** One test's outcome. [error] is null on success. */
 data class SelfTestResult(
@@ -69,19 +69,17 @@ object SelfTest {
         })
 
         add(check("SAF URI → internal storage path") {
-            val uri = Uri.parse(
-                "content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FBlackNote"
-            )
+            val uri = "content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FBlackNote".toUri()
             val path = safUriToFilePath(uri)
             require(path != null && path.endsWith("Documents/BlackNote")) { "got: $path" }
         })
 
         add(check("SAF URI → null for SD card / cloud (not File-accessible)") {
             val sd = safUriToFilePath(
-                Uri.parse("content://com.android.externalstorage.documents/tree/1234-5678%3ANotes")
+                "content://com.android.externalstorage.documents/tree/1234-5678%3ANotes".toUri()
             )
             val cloud = safUriToFilePath(
-                Uri.parse("content://com.google.android.apps.docs.storage/document/abc")
+                "content://com.google.android.apps.docs.storage/document/abc".toUri()
             )
             require(sd == null) { "SD card should be null, got: $sd" }
             require(cloud == null) { "cloud should be null, got: $cloud" }
