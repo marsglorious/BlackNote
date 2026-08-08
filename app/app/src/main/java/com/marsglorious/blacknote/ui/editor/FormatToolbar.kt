@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.FormatBold
@@ -46,7 +47,7 @@ fun FormatToolbar(
         ToolButton(Icons.Outlined.FormatUnderlined, "Format underline")   { onApply(FormatKind.UNDERLINE) }
         ToolButton(Icons.Outlined.FormatStrikethrough, "Format strikethrough"){ onApply(FormatKind.STRIKE) }
         ToolButton(Icons.Outlined.FormatListNumbered, "Format ordered list") { onApply(FormatKind.ORDERED_LIST) }
-        ToolButton(Icons.Outlined.FormatListBulleted, "Format bullet list") { onApply(FormatKind.BULLET_LIST) }
+        ToolButton(Icons.AutoMirrored.Outlined.FormatListBulleted, "Format bullet list") { onApply(FormatKind.BULLET_LIST) }
     }
 }
 

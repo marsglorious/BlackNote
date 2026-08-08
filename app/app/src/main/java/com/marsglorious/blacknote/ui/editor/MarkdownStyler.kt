@@ -87,7 +87,7 @@ private fun AnnotatedString.Builder.renderLine(line: String, onWikiLink: ((Strin
             1 -> 26.sp; 2 -> 22.sp; 3 -> 19.sp; 4 -> 17.sp; 5 -> 16.sp; else -> 15.sp
         }
         addStyle(
-            androidx.compose.ui.text.SpanStyle(
+            SpanStyle(
                 fontWeight = FontWeight.Bold, fontSize = size, color = MdColors.OnSurface
             ),
             start, end,
@@ -98,10 +98,10 @@ private fun AnnotatedString.Builder.renderLine(line: String, onWikiLink: ((Strin
     if (line.startsWith("> ")) {
         val start = length
         append("│ ")
-        addStyle(androidx.compose.ui.text.SpanStyle(color = MdColors.Accent), start, start + 1)
+        addStyle(SpanStyle(color = MdColors.Accent), start, start + 1)
         val inStart = length
         renderInline(line.substring(2), onWikiLink)
-        addStyle(androidx.compose.ui.text.SpanStyle(color = MdColors.OnSurfaceDim), inStart, length)
+        addStyle(SpanStyle(color = MdColors.OnSurfaceDim), inStart, length)
         return
     }
     // Bullet list
@@ -109,7 +109,7 @@ private fun AnnotatedString.Builder.renderLine(line: String, onWikiLink: ((Strin
         val markerStart = length
         append("•  ")
         addStyle(
-            androidx.compose.ui.text.SpanStyle(color = MdColors.Accent, fontWeight = FontWeight.Bold),
+            SpanStyle(color = MdColors.Accent, fontWeight = FontWeight.Bold),
             markerStart, markerStart + 1,
         )
         renderInline(line.substring(2), onWikiLink)
@@ -132,7 +132,7 @@ private fun AnnotatedString.Builder.renderLine(line: String, onWikiLink: ((Strin
     if (line == "---" || line == "***") {
         val start = length
         append("———")
-        addStyle(androidx.compose.ui.text.SpanStyle(color = MdColors.OnSurfaceFaint), start, length)
+        addStyle(SpanStyle(color = MdColors.OnSurfaceFaint), start, length)
         return
     }
     renderInline(line, onWikiLink)
@@ -149,26 +149,33 @@ private fun AnnotatedString.Builder.renderInline(line: String, onWikiLink: ((Str
             line[i] == '#' && (i == 0 || !line[i - 1].let { it.isLetterOrDigit() || it == '_' }) ->
                 consumeHashtag(line, i)?.let { i = it } ?: run { append(line[i]); i++ }
             line.startsWith("**", i) -> consumePair(line, i, "**",
-                androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold))?.let { i = it } ?: run { append(line[i]); i++ }
+                SpanStyle(fontWeight = FontWeight.Bold)
+            )?.let { i = it } ?: run { append(line[i]); i++ }
             line.startsWith("__", i) -> consumePair(line, i, "__",
-                androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold))?.let { i = it } ?: run { append(line[i]); i++ }
+                SpanStyle(fontWeight = FontWeight.Bold)
+            )?.let { i = it } ?: run { append(line[i]); i++ }
             line.startsWith("~~", i) -> consumePair(line, i, "~~",
-                androidx.compose.ui.text.SpanStyle(textDecoration = TextDecoration.LineThrough))?.let { i = it } ?: run { append(line[i]); i++ }
+                SpanStyle(textDecoration = TextDecoration.LineThrough)
+            )?.let { i = it } ?: run { append(line[i]); i++ }
             line[i] == '*' && (i + 1 >= line.length || line[i + 1] != '*') ->
                 consumePair(line, i, "*",
-                    androidx.compose.ui.text.SpanStyle(fontStyle = FontStyle.Italic))?.let { i = it } ?: run { append(line[i]); i++ }
+                    SpanStyle(fontStyle = FontStyle.Italic)
+                )?.let { i = it } ?: run { append(line[i]); i++ }
             line[i] == '_' && (i + 1 >= line.length || line[i + 1] != '_') ->
                 consumePair(line, i, "_",
-                    androidx.compose.ui.text.SpanStyle(fontStyle = FontStyle.Italic))?.let { i = it } ?: run { append(line[i]); i++ }
+                    SpanStyle(fontStyle = FontStyle.Italic)
+                )?.let { i = it } ?: run { append(line[i]); i++ }
             line[i] == '`' ->
                 consumePair(line, i, "`",
-                    androidx.compose.ui.text.SpanStyle(
+                    SpanStyle(
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                         background = MdColors.SurfaceHi2, color = MdColors.OnSurface
-                    ))?.let { i = it } ?: run { append(line[i]); i++ }
+                    )
+                )?.let { i = it } ?: run { append(line[i]); i++ }
             line.startsWith("<u>", i, ignoreCase = true) ->
                 consumeTag(line, i, "u",
-                    androidx.compose.ui.text.SpanStyle(textDecoration = TextDecoration.Underline))?.let { i = it } ?: run { append(line[i]); i++ }
+                    SpanStyle(textDecoration = TextDecoration.Underline)
+                )?.let { i = it } ?: run { append(line[i]); i++ }
             else -> { append(line[i]); i++ }
         }
     }
@@ -186,7 +193,7 @@ private fun AnnotatedString.Builder.consumeWiki(line: String, i: Int, onWikiLink
         pop()
     } else append(target)
     addStyle(
-        androidx.compose.ui.text.SpanStyle(
+        SpanStyle(
             color = MdColors.Accent, textDecoration = TextDecoration.Underline,
         ),
         start, length,
@@ -207,7 +214,7 @@ private fun AnnotatedString.Builder.consumeWebLink(line: String, i: Int): Int? {
     append(text)
     pop()
     addStyle(
-        androidx.compose.ui.text.SpanStyle(
+        SpanStyle(
             color = MdColors.Accent, textDecoration = TextDecoration.Underline,
         ),
         start, length,
@@ -224,7 +231,7 @@ private fun AnnotatedString.Builder.consumeHashtag(line: String, i: Int): Int? {
     val start = length
     append(tag)
     addStyle(
-        androidx.compose.ui.text.SpanStyle(
+        SpanStyle(
             color = MdColors.LabelChipFg, background = MdColors.LabelChipBg, fontWeight = FontWeight.Medium,
         ),
         start, length,
@@ -233,7 +240,7 @@ private fun AnnotatedString.Builder.consumeHashtag(line: String, i: Int): Int? {
 }
 
 private fun AnnotatedString.Builder.consumePair(
-    line: String, i: Int, marker: String, style: androidx.compose.ui.text.SpanStyle,
+    line: String, i: Int, marker: String, style: SpanStyle,
 ): Int? {
     val openEnd = i + marker.length
     if (openEnd >= line.length) return null
@@ -248,7 +255,7 @@ private fun AnnotatedString.Builder.consumePair(
 }
 
 private fun AnnotatedString.Builder.consumeTag(
-    line: String, i: Int, tag: String, style: androidx.compose.ui.text.SpanStyle,
+    line: String, i: Int, tag: String, style: SpanStyle,
 ): Int? {
     val open = "<$tag>"; val close = "</$tag>"
     val openEnd = i + open.length

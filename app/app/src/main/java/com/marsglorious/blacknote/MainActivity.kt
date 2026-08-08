@@ -5,6 +5,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -53,12 +60,30 @@ class MainActivity : ComponentActivity() {
                             crashReport = null
                         })
                     }
-                    when (ui.screen) {
-                        Screen.EDITOR  -> EditorScreen(state = ui, viewModel = viewModel,
-                            onBack = { viewModel.closeEditor() })
-                        Screen.TRASH   -> TrashScreen(state = ui, viewModel = viewModel)
-                        Screen.SETTINGS -> SettingsScreen(viewModel = viewModel)
-                        Screen.LIST    -> NoteListScreen(state = ui, viewModel = viewModel)
+                    AnimatedContent(
+                        targetState = ui.screen,
+                        transitionSpec = {
+                            when {
+                                targetState == Screen.EDITOR ->
+                                    (fadeIn(tween(240)) + slideInVertically(tween(240)) { it / 12 })
+                                        .togetherWith(fadeOut(tween(160)))
+                                initialState == Screen.EDITOR ->
+                                    fadeIn(tween(200)).togetherWith(
+                                        fadeOut(tween(160)) + slideOutVertically(tween(220)) { it / 12 }
+                                    )
+                                else ->
+                                    fadeIn(tween(200)).togetherWith(fadeOut(tween(160)))
+                            }
+                        },
+                        label = "screen",
+                    ) { screen ->
+                        when (screen) {
+                            Screen.EDITOR   -> EditorScreen(state = ui, viewModel = viewModel,
+                                onBack = { viewModel.closeEditor() })
+                            Screen.TRASH    -> TrashScreen(state = ui, viewModel = viewModel)
+                            Screen.SETTINGS -> SettingsScreen(viewModel = viewModel)
+                            Screen.LIST     -> NoteListScreen(state = ui, viewModel = viewModel)
+                        }
                     }
                 }
 

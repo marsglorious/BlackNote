@@ -16,12 +16,12 @@ import java.io.File
 
 /**
  * Shared setup for instrumented ViewModel tests on a managed emulator or physical device.
- * Injects a [TestSafStore] backed by a real on-device directory before each test.
+ * Injects a [TestFileStore] backed by a real on-device directory before each test.
  */
 abstract class InstrumentedVmTestBase {
     protected lateinit var ctx: Context
     protected lateinit var rootDir: File
-    protected lateinit var saf: TestSafStore
+    protected lateinit var fs: TestFileStore
     protected lateinit var repo: NoteRepository
     protected lateinit var vm: AppViewModel
 
@@ -29,9 +29,9 @@ abstract class InstrumentedVmTestBase {
     fun baseSetup() = runBlocking {
         ctx = ApplicationProvider.getApplicationContext()
         rootDir = File(ctx.cacheDir, "bn-it-${System.nanoTime()}").also { it.mkdirs() }
-        saf = TestSafStore(ctx, rootDir)
+        fs = TestFileStore(ctx, rootDir)
         val app = ctx.applicationContext as App
-        repo = NoteRepository(ctx, app.searchIndex, saf)
+        repo = NoteRepository(ctx, app.searchIndex, fs)
         app.setRepositoryForTest(repo)
         vm = AppViewModel(app, repo)
         vm.bootstrap(ctx)

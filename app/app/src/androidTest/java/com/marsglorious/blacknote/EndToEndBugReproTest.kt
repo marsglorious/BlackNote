@@ -16,7 +16,7 @@ import java.io.File
 /**
  * Instrumented repro for the four user-reported bugs. Each test drives the real production
  * [com.marsglorious.blacknote.viewmodel.AppViewModel] against a real on-device directory
- * via [TestSafStore].
+ * via [TestFileStore].
  */
 @RunWith(AndroidJUnit4::class)
 @LargeTest

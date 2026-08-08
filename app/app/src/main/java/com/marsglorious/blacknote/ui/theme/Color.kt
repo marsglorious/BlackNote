@@ -23,4 +23,24 @@ object MdColors {
     // Destructive confirmations (delete forever, empty trash).
     val DangerBg = Color(0xFF4A2226)
     val DangerFg = Color(0xFFF2B8BB)
+
+    // Each folder is assigned one of these accent colours, used as a left edge-stripe on the
+    // folder row and on every note that lives inside it — so membership reads by colour rather
+    // than by deep indentation. Muted but distinct against the near-black background.
+    val FolderPalette = listOf(
+        Color(0xFF8AB4F8), // blue
+        Color(0xFF81C995), // green
+        Color(0xFFF7A76C), // orange
+        Color(0xFFC58AF9), // purple
+        Color(0xFFF28B94), // rose
+        Color(0xFF78D9EC), // cyan
+        Color(0xFFF6C445), // amber
+        Color(0xFF9DA7F2), // indigo
+        Color(0xFF6FD0B6), // teal
+        Color(0xFFE68FD0), // magenta
+    )
+
+    /** Stable colour for a folder, derived from its path so it never shifts between sessions. */
+    fun folderColor(path: String): Color =
+        FolderPalette[(path.hashCode() and 0x7FFFFFFF) % FolderPalette.size]
 }

@@ -1,8 +1,11 @@
 package com.marsglorious.blacknote.ui.list
 
+import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -15,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.marsglorious.blacknote.BuildConfig
+import com.marsglorious.blacknote.data.safUriToFilePath
 import com.marsglorious.blacknote.ui.theme.MdColors
 import com.marsglorious.blacknote.viewmodel.AppViewModel
 
@@ -22,9 +26,27 @@ import com.marsglorious.blacknote.viewmodel.AppViewModel
 fun SettingsScreen(viewModel: AppViewModel) {
     // System back must return to the list, not exit the app.
     androidx.activity.compose.BackHandler { viewModel.backToList() }
+    val context = LocalContext.current
+
+    // Use the system folder picker for a familiar UI, then convert the result to a real
+    // file path. SAF is only used for picking — all subsequent I/O is direct file access.
     val pickFolder = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree(),
-    ) { uri -> if (uri != null) viewModel.onFolderPicked(uri) }
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            val path = safUriToFilePath(uri)
+            if (path != null) {
+                java.io.File(path).mkdirs()
+                viewModel.onFolderPicked(path)
+            } else {
+                Toast.makeText(
+                    context,
+                    "Please choose a folder on your phone's internal storage",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
 
     Column(
         modifier = Modifier

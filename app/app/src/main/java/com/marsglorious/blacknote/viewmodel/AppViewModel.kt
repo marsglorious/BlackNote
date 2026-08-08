@@ -1,8 +1,8 @@
 package com.marsglorious.blacknote.viewmodel
 
 import android.content.Context
-import android.net.Uri
 import androidx.compose.ui.text.TextRange
+import java.io.File
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -16,8 +16,10 @@ import com.marsglorious.blacknote.data.NoteRepository
 import com.marsglorious.blacknote.data.TreeSnapshot
 import com.marsglorious.blacknote.data.stableDisplayDesc
 import com.marsglorious.blacknote.ffi.FormatKind
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,8 +45,8 @@ fun noteComparator(sortMode: SortMode, pinned: Set<String>): Comparator<Note> {
     // appear in the same order regardless of the SAF walk's non-deterministic enumeration.
     val pathTie = compareBy<Note> { it.path }
     val base: Comparator<Note> = when (sortMode) {
-        SortMode.DATE_DESC     -> compareByDescending<Note> { it.displayMillis }.then(pathTie)
-        SortMode.DATE_ASC      -> compareBy<Note>           { it.displayMillis }.then(pathTie)
+        SortMode.DATE_DESC     -> compareByDescending<Note> { it.modifiedMillis }.then(pathTie)
+        SortMode.DATE_ASC      -> compareBy<Note>           { it.modifiedMillis }.then(pathTie)
         SortMode.MODIFIED_DESC -> compareByDescending<Note> { it.modifiedMillis }.then(pathTie)
         SortMode.TITLE_ASC     -> compareBy<Note>           { it.title.lowercase() }.then(pathTie)
     }
@@ -56,6 +58,12 @@ data class UiState(
     val listMode: ListViewMode = ListViewMode.LIST,
     val editorMode: EditorMode = EditorMode.EDIT,
     val hasFolder: Boolean = false,
+    /** False until bootstrap has resolved whether a folder is configured. Used to avoid
+     *  flashing the "Pick a folder" screen during the brief async startup read. */
+    val folderKnown: Boolean = false,
+    /** False until the first tree load completes. Guards the "No notes yet" placeholder so it
+     *  can't flash before notes have actually been loaded. */
+    val initialLoadComplete: Boolean = false,
     val query: String = "",
     val tree: TreeSnapshot = TreeSnapshot.EMPTY,
     val expandedFolders: Set<String> = emptySet(),
@@ -83,8 +91,14 @@ data class UiState(
     val confirmEmptyTrash: Boolean = false,
     val listScrollIndex: Int = 0,
     val listScrollOffset: Int = 0,
+    /** One-shot: set when a newly-created note lands at the top of the list, so the list
+     *  scrolls up to reveal it. Cleared by the UI once consumed. Other edits leave it false
+     *  so the list stays where the user scrolled to. */
+    val scrollListToTop: Boolean = false,
     val collageScrollIndex: Int = 0,
     val collageScrollOffset: Int = 0,
+    /** Non-null while the self-test results dialog is showing. */
+    val selfTestResults: List<com.marsglorious.blacknote.selftest.SelfTestResult>? = null,
 )
 
 sealed class FolderPickerTask {
@@ -111,17 +125,45 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
     // suppresses these so the deleted/moved note doesn't get resurrected into the UI.
     private val pendingRemovals = java.util.Collections.synchronizedSet(HashSet<String>())
 
+    // Path of the note just created via newNote(), tracked until its editor closes so we
+    // can decide whether returning to the list should scroll to the top (see closeEditor).
+    private var pendingNewNotePath: String? = null
+
+    // The body and (displayed) title the current note was opened with. closeEditor compares
+    // against these so opening a note and closing it WITHOUT edits never rewrites the file —
+    // which would otherwise bump its modified date and reorder the list.
+    private var openedNoteBody: String = ""
+    private var openedNoteTitle: String = ""
+
+    private fun storagePermissionGranted(): Boolean =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+            android.os.Environment.isExternalStorageManager()
+        else
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                app, android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
     fun bootstrap(@Suppress("UNUSED_PARAMETER") ctx: Context) {
         viewModelScope.launch {
             loadPersistedUiPrefs()
-            val hasFolder = repo.saf.getTreeUri() != null
-            _ui.update { it.copy(hasFolder = hasFolder) }
+            // A folder path in preferences is not enough — the storage permission must also
+            // be granted. Without it every File.readText() throws SecurityException silently.
+            val hasFolder = repo.fs.getFolderPath() != null && storagePermissionGranted()
+            _ui.update { it.copy(hasFolder = hasFolder, folderKnown = true) }
             if (!hasFolder) return@launch
-            val cached = repo.cachedNotes()
+            // Show database cache instantly. Filter out any legacy content:// URI paths that
+            // were stored before the migration to direct file access — those paths are dead
+            // and would cause file reads to fail when the user taps a note.
+            val rootPath = repo.fs.getFolderPath()
+            val cached = repo.cachedNotes().filter { !it.path.startsWith("content://") }
             if (cached.isNotEmpty()) {
+                // Derive folders from the cached notes so they show at the top immediately,
+                // instead of popping in after the file walk. refreshTree() fills the rest.
+                val folders = rootPath?.let { com.marsglorious.blacknote.data.foldersFromNotes(cached, it) }
+                    ?: emptyList()
                 _ui.update { s -> s.copy(
-                    tree = TreeSnapshot(notes = cached, folders = emptyList()),
-                    visibleNotes = orderedVisible(cached, s, emptyList()),
+                    tree = TreeSnapshot(notes = cached, folders = folders),
+                    visibleNotes = orderedVisible(cached, s, folders),
                 ) }
             }
             refreshTree()
@@ -129,26 +171,26 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
     }
 
     private suspend fun loadPersistedUiPrefs() {
-        val sort = repo.saf.getPref(PREF_SORT_MODE)?.let { v ->
+        val sort = repo.fs.getPref(PREF_SORT_MODE)?.let { v ->
             SortMode.entries.firstOrNull { it.name == v }
         } ?: SortMode.DATE_DESC
-        val listMode = repo.saf.getPref(PREF_LIST_MODE)?.let { v ->
+        val listMode = repo.fs.getPref(PREF_LIST_MODE)?.let { v ->
             ListViewMode.entries.firstOrNull { it.name == v }
         } ?: ListViewMode.LIST
-        val expanded = repo.saf.getPref(PREF_EXPANDED)?.split('\n')?.filter { it.isNotBlank() }?.toSet()
+        val expanded = repo.fs.getPref(PREF_EXPANDED)?.split('\n')?.filter { it.isNotBlank() }?.toSet()
             ?: emptySet()
-        val pinned = repo.saf.getPref(PREF_PINNED)?.split('\n')?.filter { it.isNotBlank() }?.toSet()
+        val pinned = repo.fs.getPref(PREF_PINNED)?.split('\n')?.filter { it.isNotBlank() }?.toSet()
             ?: emptySet()
         _ui.update { it.copy(sortMode = sort, listMode = listMode, expandedFolders = expanded, pinned = pinned) }
     }
 
-    fun onFolderPicked(uri: Uri) {
+    fun onFolderPicked(path: String) {
         viewModelScope.launch {
-            val previous = runCatching { repo.saf.getTreeUri() }.getOrNull()
-            repo.saf.saveTreeUri(uri)
-            if (previous != null && previous.toString() != uri.toString()) {
+            val previous = runCatching { repo.fs.getFolderPath() }.getOrNull()
+            repo.fs.saveFolderPath(path)
+            if (previous != null && previous != path) {
                 // Different folder — the old tree, expansion state, pins and pending
-                // removals all refer to URIs under the previous root. Without this
+                // removals all refer to paths under the previous root. Without this
                 // reset, mergeSnapshot preserves the old folder's notes as "optimistic
                 // entries" and the user sees both folders' notes interleaved.
                 synchronized(pendingRemovals) { pendingRemovals.clear() }
@@ -162,7 +204,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                     listScrollIndex = 0, listScrollOffset = 0,
                     collageScrollIndex = 0, collageScrollOffset = 0,
                 ) }
-                repo.saf.setPref(PREF_EXPANDED, "")
+                repo.fs.setPref(PREF_EXPANDED, "")
             } else {
                 _ui.update { it.copy(hasFolder = true) }
             }
@@ -182,6 +224,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                         tree = merged,
                         visibleNotes = orderedVisible(merged.notes, s, merged.folders),
                         isRefreshing = false,
+                        initialLoadComplete = true,
                     )
                 }
                 scheduleEnrich()
@@ -190,7 +233,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                 throw t
             } catch (t: Throwable) {
                 CrashReporter.report(app, "refreshTree", t)
-                _ui.update { it.copy(isRefreshing = false) }
+                _ui.update { it.copy(isRefreshing = false, initialLoadComplete = true) }
             }
         }
     }
@@ -216,7 +259,15 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                     val snapshot = enrichedByPath.toMap()
                     enrichedByPath.clear()
                     _ui.update { s ->
-                        val newNotes = s.tree.notes.map { n -> snapshot[n.path] ?: n }
+                        val newNotes = s.tree.notes.map { n ->
+                            val e = snapshot[n.path] ?: return@map n
+                            // Preserve createdMillis and modifiedMillis from the current
+                            // in-memory note. enrichOne updates the FTS with the real
+                            // frontmatter values (for next startup), but changing them
+                            // here would reorder the list mid-session. The walk already
+                            // had the correct values from refreshTree's FTS pre-population.
+                            e.copy(createdMillis = n.createdMillis, modifiedMillis = n.modifiedMillis)
+                        }
                         s.copy(
                             tree = s.tree.copy(notes = newNotes),
                             visibleNotes = orderedVisible(newNotes, s, s.tree.folders),
@@ -249,6 +300,8 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         }
         val enrichedFresh = freshNotes.map { f ->
             val cached = existingByPath[f.path]
+            // Restore preview/tags/label that the fast walk didn't read.
+            // Sort keys (modifiedMillis, path) come from the SAF walk and are not touched.
             if (cached != null && f.preview.isEmpty() && cached.preview.isNotEmpty()) {
                 f.copy(
                     preview = cached.preview,
@@ -260,7 +313,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         val freshNotePaths = freshNotes.mapTo(HashSet()) { it.path }
         val freshFolderPaths = freshFolders.mapTo(HashSet()) { it.path }
         val extraNotes = existing.notes
-            .filter { it.path !in freshNotePaths && it.path !in pendingRemovals }
+            .filter { it.path !in freshNotePaths && it.path !in pendingRemovals && !it.path.startsWith("content://") }
         val extraFolders = existing.folders
             .filter { it.path !in freshFolderPaths && it.path !in pendingRemovals }
         return TreeSnapshot(
@@ -282,7 +335,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
 
     private fun persistExpanded() {
         val snapshot = _ui.value.expandedFolders.joinToString("\n")
-        viewModelScope.launch { repo.saf.setPref(PREF_EXPANDED, snapshot) }
+        viewModelScope.launch { repo.fs.setPref(PREF_EXPANDED, snapshot) }
     }
 
     fun setSortMode(mode: SortMode) {
@@ -292,7 +345,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                 visibleNotes = orderedVisible(s.tree.notes, s.copy(sortMode = mode), s.tree.folders),
             )
         }
-        viewModelScope.launch { repo.saf.setPref(PREF_SORT_MODE, mode.name) }
+        viewModelScope.launch { repo.fs.setPref(PREF_SORT_MODE, mode.name) }
     }
 
     fun togglePin(path: String) {
@@ -305,7 +358,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
             )
         }
         val snapshot = _ui.value.pinned.joinToString("\n")
-        viewModelScope.launch { repo.saf.setPref(PREF_PINNED, snapshot) }
+        viewModelScope.launch { repo.fs.setPref(PREF_PINNED, snapshot) }
     }
 
     fun setQuery(q: String) {
@@ -363,7 +416,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         while (true) {
             val i = haystack.indexOf(needle, from, ignoreCase = true)
             if (i < 0) break
-            for (k in 0 until needle.length) out += (i + k)
+            for (k in needle.indices) out += (i + k)
             from = i + needle.length
         }
         return out
@@ -372,7 +425,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
     fun toggleListMode() {
         _ui.update { it.copy(listMode = if (it.listMode == ListViewMode.LIST) ListViewMode.COLLAGE else ListViewMode.LIST) }
         val snapshot = _ui.value.listMode.name
-        viewModelScope.launch { repo.saf.setPref(PREF_LIST_MODE, snapshot) }
+        viewModelScope.launch { repo.fs.setPref(PREF_LIST_MODE, snapshot) }
     }
 
     fun saveListScrollPosition(index: Int, offset: Int) {
@@ -411,28 +464,53 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
             val created = repo.create(parentFolder = parentFolder)
             if (created == null) {
                 CrashReporter.report(app, "newNote.create",
-                    IllegalStateException("repo.create returned null — likely no tree permission " +
-                        "or createFile failed (treeUri=${repo.saf.getTreeUri()})"))
+                    IllegalStateException("repo.create returned null — likely no storage permission " +
+                        "or createFile failed (folder=${repo.fs.getFolderPath()})"))
                 return@launch
             }
             val (path, parent) = created
-            // Reset saved scroll position so when the user closes the editor the list
-            // shows the just-created (most recent) note at the top instead of restoring
-            // wherever they were scrolled to before tapping +.
-            _ui.update { it.copy(
-                folderMenuFor = null,
-                listScrollIndex = 0, listScrollOffset = 0,
-                collageScrollIndex = 0, collageScrollOffset = 0,
-            ) }
+            // Remember which note we just created. When its editor closes we decide whether
+            // the list should scroll to the top — only if the note actually lands at the top
+            // (see closeEditor). Otherwise the list stays wherever the user had scrolled.
+            pendingNewNotePath = path
+            _ui.update { it.copy(folderMenuFor = null) }
             openNoteRaw(path, parent, "", fileNameFor(path))
             refreshTree()
         }
     }
 
     private fun fileNameFor(path: String): String =
-        repo.saf.singleDoc(Uri.parse(path))?.name ?: ""
+        File(path).name
+
+    /** The UI has scrolled the list to the top in response to [scrollListToTop]; clear it. */
+    fun consumeScrollToTop() { _ui.update { it.copy(scrollListToTop = false) } }
+
+    /**
+     * True when [notePath] is a top-level note that sorts first — i.e. it renders at the very
+     * top of the list. Notes nested in a subfolder, or that don't sort first, are not "at the
+     * top" and must not trigger a scroll. Mirrors the list's row-building order.
+     */
+    internal fun isNoteAtTopOfList(
+        notePath: String,
+        notes: List<Note>,
+        folders: List<com.marsglorious.blacknote.data.FolderInfo>,
+        sortMode: SortMode,
+        pinned: Set<String>,
+    ): Boolean {
+        val knownFolderPaths = folders.map { it.path }.toSet()
+        val note = notes.firstOrNull { it.path == notePath } ?: return false
+        // Nested note → the folder above it occupies the top, so it isn't at the top.
+        if (note.parent in knownFolderPaths) return false
+        val topLevelNotes = notes.filter { it.parent !in knownFolderPaths }
+        val first = topLevelNotes.sortedWith(noteComparator(sortMode, pinned)).firstOrNull()
+        return first?.path == notePath
+    }
 
     fun openNote(note: Note) {
+        // Stale database entry from before the file-access migration — these paths are
+        // dead and cannot be read or written. Trigger a refresh so the list rebuilds
+        // from the real file system and the entry disappears.
+        if (note.path.startsWith("content://")) { refreshTree(); return }
         // Already opening this one — ignore re-taps.
         if (_ui.value.editingPath == note.path && _ui.value.screen == Screen.EDITOR) return
         // Read first, switch second. The previous "flip to editor instantly" approach caused
@@ -449,7 +527,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
             }
             if (body == null) {
                 android.util.Log.w("BlackNote.AppViewModel",
-                    "openNote: read returned null for ${note.path} (lastReadError=${repo.saf.lastReadError})")
+                    "openNote: read returned null for ${note.path}")
                 // Stale URI? Refresh and *wait* — earlier behavior fire-and-forgot the
                 // refresh, so rapid taps cancelled it before it could land, leaving the
                 // user unable to open the note "no matter how many times" they tapped.
@@ -474,8 +552,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                     // they can at least navigate in. Surface the read failure so they
                     // know not to overwrite content blindly.
                     CrashReporter.report(app, "openNote.unreadable",
-                        IllegalStateException("file exists but read kept failing for ${refreshed.path} " +
-                            "(lastReadError=${repo.saf.lastReadError})"))
+                        IllegalStateException("file exists but read kept failing for ${refreshed.path}"))
                     openNoteRaw(refreshed.path, refreshed.parent, "", fileNameFor(refreshed.path))
                 }
                 return@launch
@@ -526,13 +603,24 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         job.join()
     }
 
+    /** True for the auto-generated default names ("Untitled", "Untitled 2", …). */
+    private fun isDefaultUntitled(title: String): Boolean =
+        Regex("""^Untitled( \d+)?$""").matches(title)
+
     internal fun openNoteRaw(path: String, parent: String, raw: String, fileName: String = "") {
         // Title is the on-disk file name (minus .md). Body is whatever's in the file —
         // no `# Heading` stripping anymore, so the body field always shows exactly what
         // the user typed. Saving the title field renames the file.
-        val titleLine = com.marsglorious.blacknote.data.titleFromFileName(fileName)
+        // A note that still carries its default "Untitled" / "Untitled N" name opens with an
+        // empty title field (the editor shows a faint "Title" hint) so the user can type
+        // straight away instead of backspacing the placeholder out. The listing still shows
+        // "Untitled" for these files. On close, an empty title leaves the file name as-is.
+        val fileTitle = com.marsglorious.blacknote.data.titleFromFileName(fileName)
+        val titleLine = if (isDefaultUntitled(fileTitle)) "" else fileTitle
         val titleTfv = TextFieldValue(titleLine, TextRange(titleLine.length))
         val bodyTfv = TextFieldValue(raw, TextRange(0))
+        openedNoteBody = raw
+        openedNoteTitle = titleLine
         history.reset(EditorSnapshot(titleTfv, bodyTfv))
         _ui.update {
             it.copy(
@@ -567,21 +655,35 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                 canUndo = false, canRedo = false,
             )
         }
+        // Detect real edits up front. Opening a note and closing it unchanged must not write
+        // the file (that would bump its modified date and reorder the list) nor rename it.
+        val bodyChanged = bodyText != openedNoteBody
+        val titleChanged = titleText != openedNoteTitle
+        val isNewNote = path == pendingNewNotePath
         viewModelScope.launch {
-            if (path != null) {
-                val wrote = runCatching { repo.write(path, parent, bodyText) }
-                    .onFailure { CrashReporter.report(app, "closeEditor.write.throw", it) }
-                    .getOrDefault(false)
-                val renamedUri: String? = if (wrote) {
+            if (path != null && !path.startsWith("content://")) {
+                if (!bodyChanged && !titleChanged && !isNewNote) {
+                    // Existing note opened without edits — leave the file and its timestamps
+                    // completely alone (no write, no reorder). A brand-new note still falls
+                    // through so it gets inserted into the list and can scroll into view.
+                    return@launch
+                }
+                val wrote = if (bodyChanged) {
+                    runCatching { repo.write(path, parent, bodyText) }
+                        .onFailure { CrashReporter.report(app, "closeEditor.write.throw", it) }
+                        .getOrDefault(false)
+                } else true
+                if (bodyChanged && !wrote) {
+                    CrashReporter.report(app, "closeEditor.save",
+                        IllegalStateException("write returned false for $path bodyLen=${bodyText.length}"))
+                }
+                val renamedUri: String? = if (wrote && titleChanged && titleText.isNotBlank()) {
+                    // Blank title → leave the file name as-is (default "Untitled" notes open
+                    // with an empty field; closing without typing must not rename the file).
                     runCatching { repo.renameToMatchTitle(path, parent, titleText) }
                         .onFailure { CrashReporter.report(app, "closeEditor.rename.throw", it) }
                         .getOrNull()
-                } else {
-                    CrashReporter.report(app, "closeEditor.save",
-                        IllegalStateException("write returned false for $path bodyLen=${bodyText.length} " +
-                            "lastReadError=${repo.saf.lastReadError}"))
-                    null
-                }
+                } else null
                 val finalUri = renamedUri ?: path
                 // SAF providers (Samsung's ExternalStorageProvider in particular) often
                 // serve stale child-listings right after createFile, so refreshTree's
@@ -594,29 +696,33 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                 val persisted = runCatching { repo.read(finalUri) }.getOrNull()
                 if (persisted != null) {
                     val now = System.currentTimeMillis()
-                    // Keep the original creation date — the optimistic entry used to stamp
-                    // createdMillis = now, which made an old note's card date jump to
-                    // "just now" until the next full refresh corrected it.
                     val original = _ui.value.tree.notes.firstOrNull { it.path == path || it.path == finalUri }
                     val fileName = fileNameFor(finalUri).ifBlank { "Untitled.md" }
+                    // Only a real content write advances the modified date; a rename-only close
+                    // keeps the file's existing mtime (renaming doesn't touch it).
+                    val mtime = if (bodyChanged) now else (original?.modifiedMillis ?: now)
                     val justSaved = Note(
                         path = finalUri, parent = parent,
                         title = com.marsglorious.blacknote.data.titleFromFileName(fileName),
                         preview = persisted.take(200),
-                        modifiedMillis = now,
+                        modifiedMillis = mtime,
                         createdMillis = original?.createdMillis ?: now,
                         tags = original?.tags ?: emptyList(),
                         label = original?.label,
                     )
-                    // A rename means the old URI is dead — suppress it so a stale walk
-                    // doesn't resurrect the pre-rename file alongside the renamed one.
                     if (finalUri != path) pendingRemovals.add(path)
+                    if (isNewNote) pendingNewNotePath = null
                     _ui.update { st ->
                         val rest = st.tree.notes.filter { it.path != path && it.path != finalUri }
                         val merged = (listOf(justSaved) + rest).sortedWith(stableDisplayDesc)
+                        // Only a brand-new note that actually lands at the top of the list
+                        // makes the list scroll up; every other edit leaves scroll untouched.
+                        val toTop = isNewNote &&
+                            isNoteAtTopOfList(finalUri, merged, st.tree.folders, st.sortMode, st.pinned)
                         st.copy(
                             tree = st.tree.copy(notes = merged),
                             visibleNotes = orderedVisible(merged, st, st.tree.folders),
+                            scrollListToTop = st.scrollListToTop || toTop,
                         )
                     }
                 }
@@ -881,6 +987,17 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
     fun openSettings() { _ui.update { it.copy(screen = Screen.SETTINGS) } }
     fun backToList() { _ui.update { it.copy(screen = Screen.LIST) } }
 
+    /** Run the on-device self-test harness and show the results dialog. */
+    fun runSelfTests() {
+        viewModelScope.launch {
+            val results = withContext(Dispatchers.Default) {
+                com.marsglorious.blacknote.selftest.SelfTest.runAll(app)
+            }
+            _ui.update { it.copy(selfTestResults = results) }
+        }
+    }
+    fun dismissSelfTests() { _ui.update { it.copy(selfTestResults = null) } }
+
     fun openNewFolderDialog() { _ui.update { it.copy(showNewFolderDialog = true) } }
     fun cancelNewFolder() { _ui.update { it.copy(showNewFolderDialog = false) } }
     fun createFolder(name: String) {
@@ -896,11 +1013,11 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                 // Splice the folder into the in-memory tree so it shows up now;
                 // refreshTree below reconciles when the cache catches up.
                 val safe = com.marsglorious.blacknote.data.sanitizeFileName(name, fallback = "Folder")
-                val rootUri = repo.saf.getTreeUri()?.toString()
-                if (rootUri != null) {
+                val rootPath = runCatching { repo.fs.getFolderPath() }.getOrNull()
+                if (rootPath != null) {
                     _ui.update { s ->
                         val newFolder = FolderInfo(
-                            path = createdUri, parent = rootUri, name = safe, depth = 0,
+                            path = createdUri, parent = rootPath, name = safe, depth = 0,
                         )
                         val merged = s.tree.folders.filter { it.path != createdUri } + newFolder
                         s.copy(tree = s.tree.copy(folders = merged))

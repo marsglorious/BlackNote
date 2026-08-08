@@ -194,9 +194,16 @@ class ViewModelBasicTest {
 
     @Test
     fun hittingBack_fromEditor_goesToList() = runTest {
+        // Override write/rename so closeEditor's save stays on the test scheduler instead of
+        // hopping to Dispatchers.IO — otherwise the save coroutine resumes on Main after the
+        // test ends and resetMain() has run, throwing from TestMainDispatcher.
+        val fakeRepo = object : NoteRepository(ApplicationProvider.getApplicationContext<Context>(), null) {
+            override suspend fun write(path: String, parent: String, text: String) = true
+            override suspend fun renameToMatchTitle(currentUri: String, parent: String, desiredTitle: String) = currentUri
+        }
         val testVm = AppViewModel(
             ApplicationProvider.getApplicationContext<Context>() as App,
-            NoteRepository(ApplicationProvider.getApplicationContext<Context>(), null)
+            fakeRepo
         )
         // Simulate being in editor
         testVm.openNoteRaw("p", "root", "some body")
@@ -247,6 +254,9 @@ class ViewModelBasicTest {
                 folders = emptyList()
             )
             override suspend fun read(path: String) = "body"
+            // Keep the closeEditor save on the test scheduler (no real Dispatchers.IO hop).
+            override suspend fun write(path: String, parent: String, text: String) = true
+            override suspend fun renameToMatchTitle(currentUri: String, parent: String, desiredTitle: String) = currentUri
         }
         val testVm = AppViewModel(ApplicationProvider.getApplicationContext<Context>() as App, fakeRepo)
         testVm.refreshTree()

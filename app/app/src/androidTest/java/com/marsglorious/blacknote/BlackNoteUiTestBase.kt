@@ -22,7 +22,7 @@ import java.io.File
 
 /**
  * Base for full Compose UI tests on a managed Pixel 7 emulator (or any connected device).
- * [TestStoreRule] injects [TestSafStore] before [MainActivity] launches so tests skip the SAF picker.
+ * [TestStoreRule] injects [TestFileStore] before [MainActivity] launches so tests skip the folder picker.
  */
 abstract class BlackNoteUiTestBase {
     protected val storeRule = TestStoreRule()
@@ -151,8 +151,8 @@ abstract class BlackNoteUiTestBase {
                     val ctx = ApplicationProvider.getApplicationContext<Context>()
                     rootDir = File(ctx.cacheDir, "bn-ui-${System.nanoTime()}").also { it.mkdirs() }
                     val app = ctx.applicationContext as App
-                    val saf = TestSafStore(ctx, rootDir)
-                    app.setRepositoryForTest(NoteRepository(ctx, app.searchIndex, saf))
+                    val fs = TestFileStore(ctx, rootDir)
+                    app.setRepositoryForTest(NoteRepository(ctx, app.searchIndex, fs))
                     try {
                         base.evaluate()
                     } finally {

@@ -1,6 +1,6 @@
 plugins {
-    id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -71,6 +71,8 @@ android {
     }
 }
 
+tasks.register("prepareKotlinBuildScriptModel") {}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
     implementation(composeBom)
@@ -85,7 +87,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.datastore:datastore-preferences:1.0.0")
-    implementation("androidx.graphics:graphics-path:1.2.0")
+    implementation("androidx.graphics:graphics-path:1.1.0")
     implementation("net.java.dev.jna:jna:5.19.1@aar")
     debugImplementation("androidx.compose.ui:ui-tooling")
 

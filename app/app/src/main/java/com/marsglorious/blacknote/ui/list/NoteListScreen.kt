@@ -1,8 +1,11 @@
 package com.marsglorious.blacknote.ui.list
 
+import android.content.Context
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -25,6 +28,7 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.MoveToInbox
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
@@ -48,6 +52,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import com.marsglorious.blacknote.data.FolderInfo
 import com.marsglorious.blacknote.data.Note
+import com.marsglorious.blacknote.data.safUriToFilePath
 import com.marsglorious.blacknote.ui.theme.MdColors
 import com.marsglorious.blacknote.viewmodel.AppViewModel
 import com.marsglorious.blacknote.viewmodel.ListViewMode
@@ -60,9 +65,24 @@ import java.util.Locale
 
 @Composable
 fun NoteListScreen(state: UiState, viewModel: AppViewModel) {
+    val context = LocalContext.current
     val pickFolder = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree(),
-    ) { uri -> if (uri != null) viewModel.onFolderPicked(uri) }
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            val path = safUriToFilePath(uri)
+            if (path != null) {
+                java.io.File(path).mkdirs()
+                viewModel.onFolderPicked(path)
+            } else {
+                android.widget.Toast.makeText(
+                    context,
+                    "Please choose a folder on your phone's internal storage",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -76,6 +96,9 @@ fun NoteListScreen(state: UiState, viewModel: AppViewModel) {
                 .padding(horizontal = 16.dp)
         ) {
             Spacer(Modifier.height(8.dp))
+            // Until bootstrap has resolved folder status, render nothing (just the themed
+            // background) rather than flashing the "Pick a folder" screen for a frame.
+            if (!state.folderKnown) return@Column
             if (!state.hasFolder) {
                 EmptyFolderState(onPick = { pickFolder.launch(null) })
                 return@Column
@@ -91,11 +114,13 @@ fun NoteListScreen(state: UiState, viewModel: AppViewModel) {
                 onOpenSettings = { viewModel.openSettings() },
                 onNewFolder = { viewModel.openNewFolderDialog() },
                 onRefresh = { viewModel.refreshTree() },
+                onRunTests = { viewModel.runSelfTests() },
             )
             Spacer(Modifier.height(8.dp))
             val nothing = state.tree.notes.isEmpty() && state.tree.folders.isEmpty()
             when {
-                nothing && !state.isRefreshing -> EmptyNotesPlaceholder()
+                // Only after the first load completes — never flash "No notes yet" mid-load.
+                nothing && !state.isRefreshing && state.initialLoadComplete -> EmptyNotesPlaceholder()
                 state.listMode == ListViewMode.COLLAGE -> CollageGrid(state, viewModel)
                 else -> ListView(state, viewModel)
             }
@@ -119,7 +144,62 @@ fun NoteListScreen(state: UiState, viewModel: AppViewModel) {
             elevation = FloatingActionButtonDefaults.elevation(0.dp),
             modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
         ) { Icon(Icons.Outlined.Add, contentDescription = "New note") }
+
+        state.selfTestResults?.let { results ->
+            SelfTestDialog(results = results, onDismiss = { viewModel.dismissSelfTests() })
+        }
     }
+}
+
+@Composable
+private fun SelfTestDialog(
+    results: List<com.marsglorious.blacknote.selftest.SelfTestResult>,
+    onDismiss: () -> Unit,
+) {
+    val passed = results.count { it.passed }
+    val allPassed = passed == results.size
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close", color = MdColors.Accent) }
+        },
+        title = {
+            Text(
+                "Self-tests: $passed/${results.size} passed",
+                color = if (allPassed) MdColors.Accent else MdColors.OnSurface,
+            )
+        },
+        text = {
+            androidx.compose.foundation.lazy.LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.heightIn(max = 420.dp),
+            ) {
+                items(results) { r ->
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                if (r.passed) Icons.Outlined.Check else Icons.Outlined.Close,
+                                contentDescription = if (r.passed) "passed" else "failed",
+                                tint = if (r.passed) MdColors.Accent else MdColors.DangerFg,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(r.name, color = MdColors.OnSurface, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        r.error?.let { err ->
+                            Text(
+                                err,
+                                color = MdColors.DangerFg,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(start = 26.dp, top = 2.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        containerColor = MdColors.SurfaceHi,
+    )
 }
 
 @Composable
@@ -145,6 +225,14 @@ private fun ListView(state: UiState, viewModel: AppViewModel) {
     LaunchedEffect(state.query) {
         if (state.query != initialQuery) listState.animateScrollToItem(0)
     }
+    // A newly-created note that landed at the top asks the list to scroll up to reveal it.
+    // One-shot: consume the flag so ordinary edits don't move the list.
+    LaunchedEffect(state.scrollListToTop) {
+        if (state.scrollListToTop) {
+            listState.scrollToItem(0)
+            viewModel.consumeScrollToTop()
+        }
+    }
     // Continuously save current scroll position so back returns to exact location
     LaunchedEffect(listState) {
         snapshotFlow {
@@ -168,6 +256,7 @@ private fun ListView(state: UiState, viewModel: AppViewModel) {
                     folder = row.folder,
                     expanded = row.expanded,
                     noteCount = row.noteCount,
+                    color = MdColors.folderColor(row.folder.path),
                     onClick = { viewModel.toggleFolder(row.folder.path) },
                     onLongClick = { viewModel.openFolderMenu(row.folder.path) },
                     showMenu = state.folderMenuFor == row.folder.path,
@@ -182,6 +271,8 @@ private fun ListView(state: UiState, viewModel: AppViewModel) {
                         idNumber = noteIds[row.note.path] ?: 0,
                         locationLabel = absolutePathFromUri(row.note.path),
                         pinned = row.note.path in state.pinned,
+                        // Notes nested in a folder carry that folder's colour; top-level notes don't.
+                        accentColor = if (row.indent > 0) MdColors.folderColor(row.note.parent) else null,
                         titleHighlights = hl?.first.orEmpty(),
                         previewHighlights = hl?.second.orEmpty(),
                         onClick = { viewModel.openNote(row.note) },
@@ -218,6 +309,7 @@ private fun SearchBarWithMenu(
     onOpenSettings: () -> Unit,
     onNewFolder: () -> Unit,
     onRefresh: () -> Unit,
+    onRunTests: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var sortMenuOpen by remember { mutableStateOf(false) }
@@ -262,6 +354,11 @@ private fun SearchBarWithMenu(
                     text = { Text("Settings", color = MdColors.OnSurface) },
                     leadingIcon = { Icon(Icons.Outlined.Settings, null, tint = MdColors.OnSurfaceDim) },
                     onClick = { menuOpen = false; onOpenSettings() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Run self-tests", color = MdColors.OnSurface) },
+                    leadingIcon = { Icon(Icons.Outlined.Science, null, tint = MdColors.OnSurfaceDim) },
+                    onClick = { menuOpen = false; onRunTests() },
                 )
             }
             DropdownMenu(
@@ -315,37 +412,46 @@ private fun FolderCard(
     folder: FolderInfo,
     expanded: Boolean,
     noteCount: Int,
+    color: androidx.compose.ui.graphics.Color,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {},
     showMenu: Boolean = false,
     onDismissMenu: () -> Unit = {},
     onNewNoteHere: () -> Unit = {},
 ) {
-    Box(Modifier.padding(start = (folder.depth * 16).dp)) {
+    Box(Modifier.padding(start = (folder.depth * 4).dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .height(IntrinsicSize.Min)
                 .clip(RoundedCornerShape(14.dp))
                 .background(if (expanded) MdColors.FolderBgExpanded else MdColors.FolderBg)
-                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         ) {
-            Icon(
-                if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,
-                contentDescription = if (expanded) "Collapse" else "Expand",
-                tint = MdColors.FolderFg,
-            )
-            Spacer(Modifier.width(8.dp))
-            Icon(Icons.Outlined.Folder, null, tint = MdColors.FolderFg, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(folder.name, color = MdColors.FolderFg, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.weight(1f))
-            Text(
-                if (noteCount > 0) "$noteCount" else "—",
-                color = MdColors.FolderFg.copy(alpha = 0.7f),
-                fontSize = 12.sp
-            )
+            // The colour stripe + tinted icon are what tie this folder to its notes below.
+            Box(Modifier.fillMaxHeight().width(4.dp).background(color))
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = color,
+                )
+                Spacer(Modifier.width(8.dp))
+                Icon(Icons.Outlined.Folder, null, tint = color, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(folder.name, color = MdColors.FolderFg, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    if (noteCount > 0) "$noteCount" else "—",
+                    color = MdColors.FolderFg.copy(alpha = 0.7f),
+                    fontSize = 12.sp
+                )
+            }
         }
         DropdownMenu(
             expanded = showMenu,
@@ -367,6 +473,7 @@ internal fun NoteCard(
     idNumber: Int = 0,
     locationLabel: String = "/",
     pinned: Boolean = false,
+    accentColor: androidx.compose.ui.graphics.Color? = null,
     titleHighlights: List<Int> = emptyList(),
     previewHighlights: List<Int> = emptyList(),
     onClick: () -> Unit,
@@ -383,14 +490,23 @@ internal fun NoteCard(
     val titleText = note.title.ifBlank { "Untitled" }
     val styledTitle = remember(titleText, titleHighlights) { highlight(titleText, titleHighlights) }
     val styledPreview = remember(note.preview, previewHighlights) { highlight(note.preview, previewHighlights) }
-    Box(Modifier.padding(start = (indent * 16).dp)) {
-        Column(
+    // Indentation is now just a faint cue — folder membership reads from the accent stripe.
+    Box(Modifier.padding(start = (indent * 4).dp)) {
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .height(IntrinsicSize.Min)
                 .testTag("note_card_${note.title.ifBlank { "Untitled" }}")
                 .clip(RoundedCornerShape(16.dp))
                 .background(MdColors.Surface)
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+        ) {
+            if (accentColor != null) {
+                Box(Modifier.fillMaxHeight().width(4.dp).background(accentColor))
+            }
+        Column(
+            modifier = Modifier
+                .weight(1f)
                 .padding(horizontal = 14.dp, vertical = 12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -448,6 +564,7 @@ internal fun NoteCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
         }
         DropdownMenu(
             expanded = showMenu,
@@ -569,16 +686,24 @@ internal fun highlight(text: String, positions: List<Int>): AnnotatedString {
 }
 
 /**
- * Extract the human-readable absolute path of a document directly from its SAF URI.
- * SAF tree document URIs are shaped like
- *   content://com.android.externalstorage.documents/tree/primary%3ANotes/document/primary%3ANotes%2FPersonal%2FWork%2Fnote.md
- * The document ID (the segment after "/document/") for ExternalStorageProvider is
- *   primary:Notes/Personal/Work/note.md
- * — i.e. the volume label, a colon, then the relative path under that volume. We
- * surface that as "/Notes/Personal/Work/note.md" so the user sees their actual
- * directory structure even when the in-memory folder list hasn't caught up yet.
+ * Extract a human-readable path from a note path string. For plain file paths
+ * (the new default) this returns the path directly, trimming the storage root prefix
+ * so the user sees a short relative path. Handles legacy SAF content:// URIs for
+ * users migrating from old data.
  */
 internal fun absolutePathFromUri(uriString: String): String {
+    // Plain file path — extract a user-friendly relative portion.
+    if (uriString.startsWith("/")) {
+        // Strip common storage prefixes to show a shorter path.
+        val storageRoot = "/storage/emulated/0/"
+        val sdcardRoot = "/sdcard/"
+        return when {
+            uriString.startsWith(storageRoot) -> "/" + uriString.removePrefix(storageRoot).trimStart('/')
+            uriString.startsWith(sdcardRoot) -> "/" + uriString.removePrefix(sdcardRoot).trimStart('/')
+            else -> uriString
+        }
+    }
+    // Legacy SAF URI fallback.
     val docMarker = "/document/"
     val treeMarker = "/tree/"
     val idStart = when {

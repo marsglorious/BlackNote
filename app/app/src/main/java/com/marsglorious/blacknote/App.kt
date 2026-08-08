@@ -20,7 +20,7 @@ open class App : Application() {
 
     /**
      * Test-only injection point. Lets instrumented tests swap in a NoteRepository whose
-     * SafStore is backed by a real on-device directory (no SAF picker, no caching) so
+     * FileStore is backed by a real on-device directory (no SAF picker, no caching) so
      * end-to-end bug repros can drive the production AppViewModel against a known fs.
      */
     @androidx.annotation.VisibleForTesting

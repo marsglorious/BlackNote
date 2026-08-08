@@ -48,6 +48,13 @@ fun CollageGrid(state: UiState, viewModel: AppViewModel) {
     androidx.compose.runtime.LaunchedEffect(state.query) {
         if (state.query != initialQuery) gridState.animateScrollToItem(0)
     }
+    // A newly-created note that landed at the top asks the grid to scroll up to reveal it.
+    androidx.compose.runtime.LaunchedEffect(state.scrollListToTop) {
+        if (state.scrollListToTop) {
+            gridState.scrollToItem(0)
+            viewModel.consumeScrollToTop()
+        }
+    }
     // Continuously save current scroll position
     LaunchedEffect(gridState) {
         snapshotFlow {
@@ -67,11 +74,14 @@ fun CollageGrid(state: UiState, viewModel: AppViewModel) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
         ) {
+            val knownFolderPaths = state.tree.folders.map { it.path }.toSet()
             items(notes, key = { it.path }) { note ->
                 val hl = state.searchHighlights[note.path]
                 CollageTile(
                     note = note,
                     pinned = note.path in state.pinned,
+                    // Colour-code by folder so membership is visible in the flat grid too.
+                    accentColor = if (note.parent in knownFolderPaths) MdColors.folderColor(note.parent) else null,
                     titleHighlights = hl?.first.orEmpty(),
                     previewHighlights = hl?.second.orEmpty(),
                     onClick = { viewModel.openNote(note) },
@@ -98,6 +108,7 @@ fun CollageGrid(state: UiState, viewModel: AppViewModel) {
 internal fun CollageTile(
     note: Note,
     pinned: Boolean = false,
+    accentColor: androidx.compose.ui.graphics.Color? = null,
     titleHighlights: List<Int> = emptyList(),
     previewHighlights: List<Int> = emptyList(),
     onClick: () -> Unit,
@@ -114,12 +125,20 @@ internal fun CollageTile(
     val styledTitle = androidx.compose.runtime.remember(titleText, titleHighlights) { highlight(titleText, titleHighlights) }
     val styledPreview = androidx.compose.runtime.remember(note.preview, previewHighlights) { highlight(note.preview, previewHighlights) }
     Box {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .height(IntrinsicSize.Min)
                 .clip(RoundedCornerShape(14.dp))
                 .background(MdColors.Surface)
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+        ) {
+            if (accentColor != null) {
+                Box(Modifier.fillMaxHeight().width(4.dp).background(accentColor))
+            }
+        Column(
+            modifier = Modifier
+                .weight(1f)
                 .padding(12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -160,6 +179,7 @@ internal fun CollageTile(
                     }
                 }
             }
+        }
         }
         DropdownMenu(
             expanded = showMenu,

@@ -1275,7 +1275,7 @@ private class JavaLangRefCleanable(
 ) : UniffiCleaner.Cleanable {
     override fun clean() = cleanable.clean()
 }
-public interface SearchIndexInterface {
+interface SearchIndexInterface {
     
     fun `allSorted`(`limit`: kotlin.UInt): List<NoteMeta>
     
@@ -1794,5 +1794,22 @@ public object FfiConverterSequenceTypeNoteMeta: FfiConverterRustBuffer<List<Note
     )
     }
     
+ fun `extractMeta`(`path`: kotlin.String, `parent`: kotlin.String, `fileName`: kotlin.String, `text`: kotlin.String, `modifiedMillis`: kotlin.Long): NoteMeta {
+            return FfiConverterTypeNoteMeta.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_blacknote_fn_func_extract_meta(
+        FfiConverterString.lower(`path`),FfiConverterString.lower(`parent`),FfiConverterString.lower(`fileName`),FfiConverterString.lower(`text`),FfiConverterLong.lower(`modifiedMillis`),_status)
+}
+    )
+    }
+    
+ fun `fuzzySearch`(`notes`: List<NoteMeta>, `query`: kotlin.String, `limit`: kotlin.UInt): List<FuzzyResult> {
+            return FfiConverterSequenceTypeFuzzyResult.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_blacknote_fn_func_fuzzy_search(
+        FfiConverterSequenceTypeNoteMeta.lower(`notes`),FfiConverterString.lower(`query`),FfiConverterUInt.lower(`limit`),_status)
+}
+    )
+    }
 
 

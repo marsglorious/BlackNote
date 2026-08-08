@@ -93,7 +93,7 @@ class ListContinuationTest {
         vm.onBodyChange(TextFieldValue(text, TextRange(3)))
         val result = typeEnter(text, 3)
         assertEquals("- a\n- \n- b", result.text)
-        assertEquals(7, result.selection.start)
+        assertEquals(6, result.selection.start)  // cursor sits right after the inserted "- "
     }
 
     // ── Ordered list ───────────────────────────────────────────────────────────
