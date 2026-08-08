@@ -1,7 +1,5 @@
 package com.marsglorious.blacknote.data
 
-import com.marsglorious.blacknote.ffi.FormatKind
-
 /**
  * Kotlin-native markdown format toggling, replacing the Rust `apply_format` FFI call.
  *

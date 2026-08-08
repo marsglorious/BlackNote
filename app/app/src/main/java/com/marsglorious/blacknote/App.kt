@@ -2,16 +2,16 @@ package com.marsglorious.blacknote
 
 import android.app.Application
 import com.marsglorious.blacknote.data.NoteRepository
-import com.marsglorious.blacknote.ffi.SearchIndex
+import com.marsglorious.blacknote.data.SearchIndex
 import java.io.File
 
 open class App : Application() {
 
-    /** Null if the native FTS5 index failed to load — we then fall back to in-memory search. */
+    /** Null if the SQLite index failed to open — we then fall back to in-memory search. */
     var searchIndex: SearchIndex? = null
         private set
 
-    var ffiError: Throwable? = null
+    var indexError: Throwable? = null
         private set
 
     private var _repository: NoteRepository? = null
@@ -33,7 +33,7 @@ open class App : Application() {
             val dbPath = File(filesDir, "notes.db").absolutePath
             searchIndex = SearchIndex(dbPath)
         } catch (t: Throwable) {
-            ffiError = t
+            indexError = t
             CrashReporter.report(this, "SearchIndex.init", t)
             searchIndex = null
         }

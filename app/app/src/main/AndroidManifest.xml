@@ -14,9 +14,6 @@
         android:supportsRtl="true"
         android:requestLegacyExternalStorage="true"
         android:theme="@style/Theme.BlackNote">
-        <property
-            android:name="android.pageSizeCompat"
-            android:value="enabled" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

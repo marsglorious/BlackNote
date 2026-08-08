@@ -1,7 +1,5 @@
 package com.marsglorious.blacknote.data
 
-import com.marsglorious.blacknote.ffi.NoteMeta
-
 data class Note(
     val path: String,
     val parent: String,

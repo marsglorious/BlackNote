@@ -16,11 +16,6 @@ Thumbs.db
 local.properties
 **/local.properties
 
-# Generated UniFFI Kotlin bindings — regenerated from rust-core/src/blacknote.udl
-# Kept under source control so the app builds without the bindgen step.
-# (Comment the line below out only if you want to force regen on every clone.)
-# app/app/src/main/java/com/marsglorious/blacknote/ffi/
-
 # Crash logs (runtime artifacts)
 crash.log
 

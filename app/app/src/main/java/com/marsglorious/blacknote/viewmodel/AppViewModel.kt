@@ -15,7 +15,7 @@ import com.marsglorious.blacknote.data.Note
 import com.marsglorious.blacknote.data.NoteRepository
 import com.marsglorious.blacknote.data.TreeSnapshot
 import com.marsglorious.blacknote.data.stableDisplayDesc
-import com.marsglorious.blacknote.ffi.FormatKind
+import com.marsglorious.blacknote.data.FormatKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay

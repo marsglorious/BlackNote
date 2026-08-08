@@ -21,7 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
-import com.marsglorious.blacknote.ffi.FormatKind
+import com.marsglorious.blacknote.data.FormatKind
 import com.marsglorious.blacknote.ui.theme.MdColors
 import com.marsglorious.blacknote.viewmodel.UiState
 

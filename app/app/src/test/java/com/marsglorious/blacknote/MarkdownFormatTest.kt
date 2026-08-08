@@ -1,7 +1,7 @@
 package com.marsglorious.blacknote
 
 import com.marsglorious.blacknote.data.MarkdownFormat
-import com.marsglorious.blacknote.ffi.FormatKind
+import com.marsglorious.blacknote.data.FormatKind
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

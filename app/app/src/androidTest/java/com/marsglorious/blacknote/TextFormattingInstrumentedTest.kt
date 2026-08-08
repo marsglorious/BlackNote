@@ -2,7 +2,7 @@ package com.marsglorious.blacknote
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
-import com.marsglorious.blacknote.ffi.FormatKind
+import com.marsglorious.blacknote.data.FormatKind
 import com.marsglorious.blacknote.viewmodel.EditorMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals

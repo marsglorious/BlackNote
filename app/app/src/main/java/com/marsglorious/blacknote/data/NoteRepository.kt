@@ -1,18 +1,15 @@
 package com.marsglorious.blacknote.data
 
 import android.content.Context
-import com.marsglorious.blacknote.ffi.SearchIndex
-import com.marsglorious.blacknote.ffi.extractMeta
-import com.marsglorious.blacknote.ffi.searchNotes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
  * Tree-aware note store. The on-disk source of truth is the folder the user picked;
- * we mirror everything we know into a SQLite FTS5 index that doubles as a startup cache —
- * so the list can render instantly from the index while a background file scan refreshes
- * the tree structure.
+ * we mirror everything we know into a SQLite index (see [SearchIndex]) that doubles as a
+ * startup cache — so the list can render instantly from the index while a background file
+ * scan refreshes the tree structure.
  *
  * Folders are derived from the file walk only — never persisted into the index — so the
  * index continues to deal only in flat notes (each note carries its `parent` path string,
