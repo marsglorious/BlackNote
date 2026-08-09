@@ -228,12 +228,12 @@ private fun AnnotatedString.Builder.consumeHashtag(line: String, i: Int): Int? {
     if (end == i + 1) return null
     val tag = line.substring(i, end)
     if (tag.substring(1).all { it.isDigit() }) return null
+    val tagName = tag.substring(1).lowercase()
+    val color = MdColors.hashtagColor(tagName)
     val start = length
     append(tag)
     addStyle(
-        SpanStyle(
-            color = MdColors.LabelChipFg, background = MdColors.LabelChipBg, fontWeight = FontWeight.Medium,
-        ),
+        SpanStyle(color = color, background = color.copy(alpha = 0.18f), fontWeight = FontWeight.Medium),
         start, length,
     )
     return end
@@ -409,8 +409,10 @@ private fun AnnotatedString.Builder.applyHashtags(src: String) {
         var end = start
         while (end < src.length && isHashtagChar(src[end])) end++
         if (end > start && !src.substring(start, end).all { it.isDigit() }) {
+            val tagName = src.substring(start, end).lowercase()
+            val color = MdColors.hashtagColor(tagName)
             addStyle(
-                SpanStyle(color = MdColors.LabelChipFg, background = MdColors.LabelChipBg, fontWeight = FontWeight.Medium),
+                SpanStyle(color = color, background = color.copy(alpha = 0.18f), fontWeight = FontWeight.Medium),
                 i, end,
             )
         }

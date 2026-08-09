@@ -14,6 +14,7 @@ import androidx.compose.material.icons.outlined.FormatListBulleted
 import androidx.compose.material.icons.outlined.FormatListNumbered
 import androidx.compose.material.icons.outlined.FormatStrikethrough
 import androidx.compose.material.icons.outlined.FormatUnderlined
+import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -31,6 +32,7 @@ fun FormatToolbar(
     onApply: (FormatKind) -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
+    onHashtag: () -> Unit = {},
 ) {
     Row(
         modifier = Modifier
@@ -48,6 +50,7 @@ fun FormatToolbar(
         ToolButton(Icons.Outlined.FormatStrikethrough, "Format strikethrough"){ onApply(FormatKind.STRIKE) }
         ToolButton(Icons.Outlined.FormatListNumbered, "Format ordered list") { onApply(FormatKind.ORDERED_LIST) }
         ToolButton(Icons.AutoMirrored.Outlined.FormatListBulleted, "Format bullet list") { onApply(FormatKind.BULLET_LIST) }
+        ToolButton(Icons.Outlined.Tag, "Suggest hashtags", onClick = onHashtag)
     }
 }
 

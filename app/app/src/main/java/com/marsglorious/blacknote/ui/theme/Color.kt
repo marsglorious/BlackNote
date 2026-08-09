@@ -43,4 +43,8 @@ object MdColors {
     /** Stable colour for a folder, derived from its path so it never shifts between sessions. */
     fun folderColor(path: String): Color =
         FolderPalette[(path.hashCode() and 0x7FFFFFFF) % FolderPalette.size]
+
+    /** Stable colour for a hashtag, derived from the lowercase tag name. */
+    fun hashtagColor(tag: String): Color =
+        FolderPalette[(tag.lowercase().hashCode() and 0x7FFFFFFF) % FolderPalette.size]
 }

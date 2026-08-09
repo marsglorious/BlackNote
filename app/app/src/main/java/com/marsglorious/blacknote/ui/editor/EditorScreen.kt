@@ -5,7 +5,10 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -13,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Share
@@ -73,11 +77,19 @@ fun EditorScreen(state: UiState, viewModel: AppViewModel, onBack: () -> Unit) {
                 onChange = { viewModel.onBodyChange(it) },
                 modifier = Modifier.weight(1f),
             )
+            if (state.hashtagPickerOpen) {
+                HashtagPickerRow(
+                    suggestions = state.hashtagSuggestions,
+                    onPick = { viewModel.insertHashtag(it) },
+                    onDismiss = { viewModel.closeHashtagPicker() },
+                )
+            }
             FormatToolbar(
                 state = state,
                 onApply = { viewModel.format(it) },
                 onUndo = { viewModel.undo() },
                 onRedo = { viewModel.redo() },
+                onHashtag = { viewModel.openHashtagPicker() },
             )
         }
     }
@@ -171,6 +183,56 @@ private fun BodyField(value: TextFieldValue, onChange: (TextFieldValue) -> Unit,
             }
         }
         EditorScrollIndicator(scroll, Modifier.align(Alignment.TopEnd))
+    }
+}
+
+@Composable
+private fun HashtagPickerRow(
+    suggestions: List<String>,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MdColors.SurfaceHi)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (suggestions.isEmpty()) {
+            Text(
+                "No hashtags yet — add #tags to your notes",
+                fontSize = 12.sp,
+                color = MdColors.OnSurfaceDim,
+                modifier = Modifier.weight(1f).padding(start = 4.dp),
+            )
+        } else {
+            LazyRow(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(suggestions) { tag ->
+                    val color = MdColors.hashtagColor(tag)
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(color.copy(alpha = 0.18f))
+                            .clickable { onPick(tag) }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    ) {
+                        Text("#$tag", color = color, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+        }
+        IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+            Icon(
+                Icons.Outlined.Close,
+                contentDescription = "Close hashtag picker",
+                tint = MdColors.OnSurfaceDim,
+                modifier = Modifier.size(18.dp),
+            )
+        }
     }
 }
 

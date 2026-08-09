@@ -305,6 +305,18 @@ open class NoteRepository(
         newPath
     }
 
+    /** Query the hashtag index for suggestions relevant to [noteBody] and [noteTitle]. */
+    open suspend fun suggestHashtags(
+        noteBody: String,
+        noteTitle: String,
+        excludeTags: Set<String>,
+        limit: Int = 20,
+    ): List<String> = withContext(Dispatchers.IO) {
+        if (index == null) return@withContext emptyList()
+        runCatching { index.suggestHashtags(noteBody, noteTitle, excludeTags, limit) }
+            .getOrDefault(emptyList())
+    }
+
     /** Create a folder under the root, returning its path string for optimistic UI updates. */
     suspend fun createFolderReturningUri(name: String): String? = withContext(Dispatchers.IO) {
         val root = fs.getRootFile() ?: return@withContext null

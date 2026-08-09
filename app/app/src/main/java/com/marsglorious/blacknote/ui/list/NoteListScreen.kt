@@ -16,12 +16,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Menu
@@ -43,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -64,7 +66,7 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-fun NoteListScreen(state: UiState, viewModel: AppViewModel) {
+fun NoteListScreen(state: UiState, viewModel: AppViewModel, onGrantPermission: () -> Unit = {}) {
     val context = LocalContext.current
     val pickFolder = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -101,6 +103,10 @@ fun NoteListScreen(state: UiState, viewModel: AppViewModel) {
             if (!state.folderKnown) return@Column
             if (!state.hasFolder) {
                 EmptyFolderState(onPick = { pickFolder.launch(null) })
+                return@Column
+            }
+            if (state.needsManagePermission) {
+                ManagePermissionScreen(onGrant = onGrantPermission)
                 return@Column
             }
             SearchBarWithMenu(
@@ -251,6 +257,12 @@ private fun ListView(state: UiState, viewModel: AppViewModel) {
         contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
     ) {
         items(rows, key = { it.key }) { row ->
+            // animateItem() only runs on the items currently in the viewport, so it
+            // stays smooth regardless of total note count.
+            val itemAnim = Modifier.animateItem(
+                fadeInSpec = tween(durationMillis = 160),
+                fadeOutSpec = tween(durationMillis = 100),
+            )
             when (row) {
                 is Row.FolderRow -> FolderCard(
                     folder = row.folder,
@@ -262,6 +274,7 @@ private fun ListView(state: UiState, viewModel: AppViewModel) {
                     showMenu = state.folderMenuFor == row.folder.path,
                     onDismissMenu = { viewModel.closeFolderMenu() },
                     onNewNoteHere = { viewModel.newNote(parentFolder = row.folder.path) },
+                    modifier = itemAnim,
                 )
                 is Row.NoteRow -> {
                     val hl = state.searchHighlights[row.note.path]
@@ -285,6 +298,7 @@ private fun ListView(state: UiState, viewModel: AppViewModel) {
                         onPin = { viewModel.togglePin(row.note.path) },
                         onShare = { viewModel.shareNote(row.note) },
                         onTagClick = { tag -> viewModel.setQuery(tag) },
+                        modifier = itemAnim,
                     )
                 }
             }
@@ -418,8 +432,14 @@ private fun FolderCard(
     showMenu: Boolean = false,
     onDismissMenu: () -> Unit = {},
     onNewNoteHere: () -> Unit = {},
+    modifier: Modifier = Modifier,
 ) {
-    Box(Modifier.padding(start = (folder.depth * 4).dp)) {
+    val chevronAngle by animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        animationSpec = tween(durationMillis = 200),
+        label = "chevron",
+    )
+    Box(modifier.padding(start = (folder.depth * 4).dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -437,9 +457,10 @@ private fun FolderCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
-                    if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,
+                    Icons.Outlined.ChevronRight,
                     contentDescription = if (expanded) "Collapse" else "Expand",
                     tint = color,
+                    modifier = Modifier.rotate(chevronAngle),
                 )
                 Spacer(Modifier.width(8.dp))
                 Icon(Icons.Outlined.Folder, null, tint = color, modifier = Modifier.size(18.dp))
@@ -486,12 +507,12 @@ internal fun NoteCard(
     onPin: () -> Unit = {},
     onShare: () -> Unit = {},
     onTagClick: (String) -> Unit = {},
+    modifier: Modifier = Modifier,
 ) {
     val titleText = note.title.ifBlank { "Untitled" }
     val styledTitle = remember(titleText, titleHighlights) { highlight(titleText, titleHighlights) }
     val styledPreview = remember(note.preview, previewHighlights) { highlight(note.preview, previewHighlights) }
-    // Indentation is now just a faint cue — folder membership reads from the accent stripe.
-    Box(Modifier.padding(start = (indent * 4).dp)) {
+    Box(modifier.padding(start = (indent * 2).dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -552,9 +573,17 @@ internal fun NoteCard(
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (note.tags.isNotEmpty()) {
+            val folderName = if (indent > 0)
+                note.parent.split('/').lastOrNull { it.isNotBlank() }?.lowercase()
+            else null
+            if (note.tags.isNotEmpty() || folderName != null) {
                 Spacer(Modifier.height(6.dp))
-                TagRow(tags = note.tags, onTagClick = onTagClick)
+                TagRow(
+                    tags = note.tags,
+                    virtualFolderTag = folderName,
+                    folderColor = accentColor,
+                    onTagClick = onTagClick,
+                )
             }
             Spacer(Modifier.height(4.dp))
             Text(
@@ -587,6 +616,32 @@ internal fun NoteCard(
                 leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = MdColors.OnSurfaceDim) },
                 onClick = onDelete)
         }
+    }
+}
+
+@Composable
+private fun ManagePermissionScreen(onGrant: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(Icons.Outlined.Settings, null, tint = MdColors.OnSurfaceDim, modifier = Modifier.size(56.dp))
+        Spacer(Modifier.height(12.dp))
+        Text("Files access required",
+            style = MaterialTheme.typography.titleMedium, color = MdColors.OnSurface)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Grant \"Allow management of all files\" in Settings so BlackNote can read your .md files.",
+            style = MaterialTheme.typography.bodyMedium, color = MdColors.OnSurfaceDim,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        Spacer(Modifier.height(20.dp))
+        Button(
+            onClick = onGrant,
+            colors = ButtonDefaults.buttonColors(containerColor = MdColors.Accent, contentColor = MdColors.Background),
+            shape = RoundedCornerShape(14.dp),
+        ) { Text("Open Settings") }
     }
 }
 
@@ -626,22 +681,45 @@ private fun formatDate(ms: Long): String = dateFmt.format(Date(ms)).lowercase()
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun TagRow(tags: List<String>, onTagClick: (String) -> Unit = {}) {
+private fun TagRow(
+    tags: List<String>,
+    virtualFolderTag: String? = null,
+    folderColor: androidx.compose.ui.graphics.Color? = null,
+    onTagClick: (String) -> Unit = {},
+) {
     androidx.compose.foundation.layout.FlowRow(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        // Show up to 4 tags; "+N" chip if more
-        val visible = tags.take(4)
-        for (tag in visible) {
+        // Virtual folder hashtag shown first so folder membership reads by colour.
+        if (virtualFolderTag != null && folderColor != null) {
             Box(
                 Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    .background(MdColors.LabelChipBg)
+                    .background(folderColor.copy(alpha = 0.18f))
+                    .clickable { onTagClick(virtualFolderTag) }
+                    .padding(horizontal = 6.dp, vertical = 1.dp)
+            ) {
+                Text(
+                    "#$virtualFolderTag",
+                    fontSize = 10.sp,
+                    color = folderColor,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+        // Show up to 4 tags; "+N" chip if more
+        val visible = tags.take(4)
+        for (tag in visible) {
+            val color = MdColors.hashtagColor(tag)
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(color.copy(alpha = 0.18f))
                     .clickable { onTagClick(tag) }
                     .padding(horizontal = 6.dp, vertical = 1.dp)
             ) {
-                Text("#$tag", fontSize = 10.sp, color = MdColors.LabelChipFg, fontWeight = FontWeight.Medium)
+                Text("#$tag", fontSize = 10.sp, color = color, fontWeight = FontWeight.Medium)
             }
         }
         if (tags.size > visible.size) {

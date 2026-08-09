@@ -58,6 +58,9 @@ data class UiState(
     val listMode: ListViewMode = ListViewMode.LIST,
     val editorMode: EditorMode = EditorMode.EDIT,
     val hasFolder: Boolean = false,
+    /** True when the app has a folder path but MANAGE_EXTERNAL_STORAGE hasn't been granted
+     *  yet, meaning the file walk will return empty results on Android 11+. */
+    val needsManagePermission: Boolean = false,
     /** False until bootstrap has resolved whether a folder is configured. Used to avoid
      *  flashing the "Pick a folder" screen during the brief async startup read. */
     val folderKnown: Boolean = false,
@@ -99,6 +102,10 @@ data class UiState(
     val collageScrollOffset: Int = 0,
     /** Non-null while the self-test results dialog is showing. */
     val selfTestResults: List<com.marsglorious.blacknote.selftest.SelfTestResult>? = null,
+    /** True while the hashtag suggestion picker row is visible above the format toolbar. */
+    val hashtagPickerOpen: Boolean = false,
+    /** Ranked hashtag suggestions for the current note; populated when [hashtagPickerOpen] = true. */
+    val hashtagSuggestions: List<String> = emptyList(),
 )
 
 sealed class FolderPickerTask {
@@ -135,38 +142,57 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
     private var openedNoteBody: String = ""
     private var openedNoteTitle: String = ""
 
-    private fun storagePermissionGranted(): Boolean =
+    private fun storagePermissionGranted(): Boolean {
+        // Android 11+ (API 30+): need MANAGE_EXTERNAL_STORAGE to list generic files
+        // like .md via java.io.File. Without it, File.listFiles() on external storage
+        // silently omits non-media files under scoped storage rules.
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
-            android.os.Environment.isExternalStorageManager()
-        else
-            androidx.core.content.ContextCompat.checkSelfPermission(
-                app, android.Manifest.permission.WRITE_EXTERNAL_STORAGE
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            return android.os.Environment.isExternalStorageManager()
+        // Android 10 and below: WRITE_EXTERNAL_STORAGE with requestLegacyExternalStorage=true
+        // gives full storage access.
+        return androidx.core.content.ContextCompat.checkSelfPermission(
+            app, android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
 
     fun bootstrap(@Suppress("UNUSED_PARAMETER") ctx: Context) {
         viewModelScope.launch {
             loadPersistedUiPrefs()
-            // A folder path in preferences is not enough — the storage permission must also
-            // be granted. Without it every File.readText() throws SecurityException silently.
-            val hasFolder = repo.fs.getFolderPath() != null && storagePermissionGranted()
-            _ui.update { it.copy(hasFolder = hasFolder, folderKnown = true) }
-            if (!hasFolder) return@launch
-            // Show database cache instantly. Filter out any legacy content:// URI paths that
-            // were stored before the migration to direct file access — those paths are dead
-            // and would cause file reads to fail when the user taps a note.
-            val rootPath = repo.fs.getFolderPath()
-            val cached = repo.cachedNotes().filter { !it.path.startsWith("content://") }
-            if (cached.isNotEmpty()) {
-                // Derive folders from the cached notes so they show at the top immediately,
-                // instead of popping in after the file walk. refreshTree() fills the rest.
-                val folders = rootPath?.let { com.marsglorious.blacknote.data.foldersFromNotes(cached, it) }
-                    ?: emptyList()
-                _ui.update { s -> s.copy(
-                    tree = TreeSnapshot(notes = cached, folders = folders),
-                    visibleNotes = orderedVisible(cached, s, folders),
-                ) }
-            }
-            refreshTree()
+            val folderPath = repo.fs.getFolderPath()
+            val hasFolder = folderPath != null
+            // Permission is checked separately from hasFolder so the folder choice is
+            // remembered across restarts even when MANAGE_EXTERNAL_STORAGE hasn't been
+            // granted yet. Without this split, storagePermissionGranted() returning false
+            // would reset hasFolder = false every restart, forcing the user to re-pick.
+            val needsPermission = hasFolder && !storagePermissionGranted()
+            _ui.update { it.copy(hasFolder = hasFolder, needsManagePermission = needsPermission, folderKnown = true) }
+            if (!hasFolder || needsPermission) return@launch
+            loadNotesFromDiskAndCache(folderPath)
+        }
+    }
+
+    private suspend fun loadNotesFromDiskAndCache(folderPath: String) {
+        // Show database cache instantly. Filter out any legacy content:// URI paths that
+        // were stored before the migration to direct file access.
+        val cached = repo.cachedNotes().filter { !it.path.startsWith("content://") }
+        if (cached.isNotEmpty()) {
+            val folders = com.marsglorious.blacknote.data.foldersFromNotes(cached, folderPath)
+            _ui.update { s -> s.copy(
+                tree = TreeSnapshot(notes = cached, folders = folders),
+                visibleNotes = orderedVisible(cached, s, folders),
+            ) }
+        }
+        refreshTree()
+    }
+
+    /** Called after the user grants MANAGE_EXTERNAL_STORAGE (or WRITE_EXTERNAL_STORAGE on
+     *  Android ≤10). Re-checks the permission and loads notes if now granted. */
+    fun onPermissionGranted() {
+        if (!storagePermissionGranted()) return
+        _ui.update { it.copy(needsManagePermission = false) }
+        viewModelScope.launch {
+            val folderPath = repo.fs.getFolderPath() ?: return@launch
+            loadNotesFromDiskAndCache(folderPath)
         }
     }
 
@@ -188,6 +214,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         viewModelScope.launch {
             val previous = runCatching { repo.fs.getFolderPath() }.getOrNull()
             repo.fs.saveFolderPath(path)
+            val needsPermission = !storagePermissionGranted()
             if (previous != null && previous != path) {
                 // Different folder — the old tree, expansion state, pins and pending
                 // removals all refer to paths under the previous root. Without this
@@ -196,6 +223,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                 synchronized(pendingRemovals) { pendingRemovals.clear() }
                 _ui.update { it.copy(
                     hasFolder = true,
+                    needsManagePermission = needsPermission,
                     tree = TreeSnapshot.EMPTY,
                     visibleNotes = emptyList(),
                     expandedFolders = emptySet(),
@@ -206,9 +234,9 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                 ) }
                 repo.fs.setPref(PREF_EXPANDED, "")
             } else {
-                _ui.update { it.copy(hasFolder = true) }
+                _ui.update { it.copy(hasFolder = true, needsManagePermission = needsPermission) }
             }
-            refreshTree()
+            if (!needsPermission) refreshTree()
         }
     }
 
@@ -997,6 +1025,45 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         }
     }
     fun dismissSelfTests() { _ui.update { it.copy(selfTestResults = null) } }
+
+    /** Open the hashtag picker: score + load suggestions for the current note body. */
+    fun openHashtagPicker() {
+        viewModelScope.launch {
+            val s = _ui.value
+            val body = s.editingBody.text
+            val title = s.editingTitle.text
+            val existing = Regex("""(?<![a-zA-Z0-9_])#([a-zA-Z][a-zA-Z0-9_\-/]*)""")
+                .findAll("$body $title")
+                .map { it.groupValues[1].lowercase() }
+                .toHashSet()
+            val suggestions = repo.suggestHashtags(body, title, existing)
+            _ui.update { it.copy(hashtagPickerOpen = true, hashtagSuggestions = suggestions) }
+        }
+    }
+
+    fun closeHashtagPicker() {
+        _ui.update { it.copy(hashtagPickerOpen = false) }
+    }
+
+    /** Insert [tag] as `#tag ` at the current cursor position (or end of body). */
+    fun insertHashtag(tag: String) {
+        val cur = _ui.value.editingBody
+        val pos = if (cur.selection.collapsed) cur.selection.start else cur.selection.end
+        val needsSpace = pos > 0 && cur.text.getOrNull(pos - 1)?.let { it != ' ' && it != '\n' } == true
+        val insertion = (if (needsSpace) " " else "") + "#$tag "
+        val newText = cur.text.substring(0, pos) + insertion + cur.text.substring(pos)
+        val newPos = pos + insertion.length
+        val next = androidx.compose.ui.text.input.TextFieldValue(
+            newText, androidx.compose.ui.text.TextRange(newPos)
+        )
+        history.record(EditorSnapshot(_ui.value.editingTitle, next))
+        _ui.update { it.copy(
+            editingBody = next,
+            canUndo = history.canUndo, canRedo = history.canRedo,
+            hashtagPickerOpen = false,
+        ) }
+        scheduleSave()
+    }
 
     fun openNewFolderDialog() { _ui.update { it.copy(showNewFolderDialog = true) } }
     fun cancelNewFolder() { _ui.update { it.copy(showNewFolderDialog = false) } }
