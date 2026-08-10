@@ -45,6 +45,11 @@ data class HashtagSuggestion(
     val tag: String,
     val noteCount: Int,
     val score: Int,
+    val scoreMentions: Int = 0,
+    val scoreOverlap: Int = 0,
+    val scoreLength: Int = 0,
+    val scoreGroup: Int = 0,
+    val scoreRecency: Int = 0,
 )
 
 /** How the note list is ordered. Pinned notes always sort first regardless of mode. */
@@ -125,6 +130,8 @@ data class UiState(
     val hashtagPickerOpen: Boolean = false,
     /** Ranked hashtag suggestions for the current note; populated when [hashtagPickerOpen] = true. */
     val hashtagSuggestions: List<HashtagSuggestion> = emptyList(),
+    /** When true, each suggestion chip shows the per-component score breakdown. */
+    val showHashtagScoreDetails: Boolean = false,
 )
 
 sealed class FolderPickerTask {
@@ -227,13 +234,20 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         val pinned = repo.fs.getPref(PREF_PINNED)?.split('\n')?.filter { it.isNotBlank() }?.toSet()
             ?: emptySet()
         val showLocation = repo.fs.getPref(PREF_SHOW_LOCATION) != "false"
+        val showHashtagDetails = repo.fs.getPref(PREF_HASHTAG_SCORE_DETAILS) == "true"
         _ui.update { it.copy(sortMode = sort, listMode = listMode, expandedFolders = expanded,
-            pinned = pinned, showFileLocation = showLocation) }
+            pinned = pinned, showFileLocation = showLocation,
+            showHashtagScoreDetails = showHashtagDetails) }
     }
 
     fun setShowFileLocation(show: Boolean) {
         _ui.update { it.copy(showFileLocation = show) }
         viewModelScope.launch { repo.fs.setPref(PREF_SHOW_LOCATION, show.toString()) }
+    }
+
+    fun setShowHashtagScoreDetails(show: Boolean) {
+        _ui.update { it.copy(showHashtagScoreDetails = show) }
+        viewModelScope.launch { repo.fs.setPref(PREF_HASHTAG_SCORE_DETAILS, show.toString()) }
     }
 
     fun onFolderPicked(path: String) {
@@ -1146,7 +1160,14 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                 val ageDays = (now - a.lastUsedMillis) / 86_400_000L
                 val recencyScore = (100 * (1.0 - (ageDays / 30.0).coerceIn(0.0, 1.0))).toLong()
                 val total = mentionScore + overlapScore + lengthScore + groupScore + recencyScore
-                HashtagSuggestion(tag = a.display, noteCount = a.count, score = total.toInt())
+                HashtagSuggestion(
+                    tag = a.display, noteCount = a.count, score = total.toInt(),
+                    scoreMentions = mentionScore.toInt(),
+                    scoreOverlap = overlapScore.toInt(),
+                    scoreLength = lengthScore.toInt(),
+                    scoreGroup = groupScore.toInt(),
+                    scoreRecency = recencyScore.toInt(),
+                )
             }
             .sortedByDescending { it.score }
             .take(limit)
@@ -1222,6 +1243,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         const val PREF_EXPANDED = "ui_expanded_folders"
         const val PREF_PINNED = "ui_pinned_paths"
         const val PREF_SHOW_LOCATION = "ui_show_file_location"
+        const val PREF_HASHTAG_SCORE_DETAILS = "ui_hashtag_score_details"
 
         fun factory(app: App) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")

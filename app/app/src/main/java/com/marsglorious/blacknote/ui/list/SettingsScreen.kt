@@ -84,6 +84,15 @@ fun SettingsScreen(viewModel: AppViewModel) {
             onCheckedChange = { viewModel.setShowFileLocation(it) },
         )
 
+        Spacer(Modifier.height(12.dp))
+
+        SettingsToggle(
+            title = "Show hashtag score details",
+            subtitle = "Break down each suggestion's score by mentions, vocabulary overlap, length match, group size, and recency",
+            checked = state.showHashtagScoreDetails,
+            onCheckedChange = { viewModel.setShowHashtagScoreDetails(it) },
+        )
+
         Spacer(Modifier.weight(1f))
         Text(
             "BlackNote v${BuildConfig.VERSION_NAME}",

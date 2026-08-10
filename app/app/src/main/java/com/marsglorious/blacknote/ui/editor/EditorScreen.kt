@@ -1,15 +1,16 @@
 package com.marsglorious.blacknote.ui.editor
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -19,24 +20,33 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -82,8 +92,9 @@ fun EditorScreen(state: UiState, viewModel: AppViewModel, onBack: () -> Unit) {
                 modifier = Modifier.weight(1f),
             )
             if (state.hashtagPickerOpen) {
-                HashtagPickerRow(
+                HashtagPickerPanel(
                     suggestions = state.hashtagSuggestions,
+                    showScoreDetails = state.showHashtagScoreDetails,
                     onPick = { viewModel.insertHashtag(it) },
                     onDismiss = { viewModel.closeHashtagPicker() },
                 )
@@ -190,67 +201,172 @@ private fun BodyField(value: TextFieldValue, onChange: (TextFieldValue) -> Unit,
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun HashtagPickerRow(
+private fun HashtagPickerPanel(
     suggestions: List<HashtagSuggestion>,
+    showScoreDetails: Boolean,
     onPick: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Row(
+    var expanded by remember { mutableStateOf(true) }
+    // Half of the screen height for the chip grid area.
+    val halfScreen = (LocalConfiguration.current.screenHeightDp / 2).dp
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MdColors.SurfaceHi)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(MdColors.SurfaceHi2),
     ) {
-        if (suggestions.isEmpty()) {
+        // Header bar: tap anywhere to collapse/expand; X to close entirely.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                "No hashtags yet — add #tags to your notes",
+                "Hashtag suggestions",
                 fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
                 color = MdColors.OnSurfaceDim,
-                modifier = Modifier.weight(1f).padding(start = 4.dp),
-            )
-        } else {
-            LazyRow(
                 modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                items(suggestions) { s ->
-                    val color = MdColors.hashtagColor(s.tag)
-                    val shape = RoundedCornerShape(9.dp)
+            )
+            if (suggestions.isNotEmpty()) {
+                Text(
+                    "${suggestions.size}",
+                    fontSize = 11.sp,
+                    color = MdColors.OnSurfaceFaint,
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+            }
+            Icon(
+                if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = MdColors.OnSurfaceDim,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    Icons.Outlined.Close,
+                    contentDescription = "Close hashtag picker",
+                    tint = MdColors.OnSurfaceDim,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(tween(180)),
+            exit = shrinkVertically(tween(150)),
+        ) {
+            Column {
+                HorizontalDivider(color = MdColors.Divider, thickness = 1.dp)
+                if (suggestions.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(72.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "No hashtags yet — add #tags to your notes first",
+                            fontSize = 12.sp,
+                            color = MdColors.OnSurfaceDim,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 24.dp),
+                        )
+                    }
+                } else {
+                    val chipScroll = rememberScrollState()
                     Box(
                         Modifier
-                            .clip(shape)
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(color.copy(alpha = 0.52f), color.copy(alpha = 0.28f))
-                                )
-                            )
-                            .border(1.dp, color.copy(alpha = 0.55f), shape)
-                            .clickable { onPick(s.tag) }
-                            .padding(horizontal = 7.dp, vertical = 4.dp),
+                            .fillMaxWidth()
+                            .heightIn(max = halfScreen),
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("#${s.tag}", color = color, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "${s.noteCount} ${if (s.noteCount == 1) "note" else "notes"} · score ${s.score}",
-                                color = color.copy(alpha = 0.85f),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Medium,
-                            )
+                        FlowRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(chipScroll)
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            for (s in suggestions) {
+                                HashtagChip(s, showScoreDetails, onPick)
+                            }
                         }
                     }
                 }
             }
         }
-        IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
-            Icon(
-                Icons.Outlined.Close,
-                contentDescription = "Close hashtag picker",
-                tint = MdColors.OnSurfaceDim,
-                modifier = Modifier.size(18.dp),
+    }
+}
+
+@Composable
+private fun HashtagChip(
+    s: HashtagSuggestion,
+    showScoreDetails: Boolean,
+    onPick: (String) -> Unit,
+) {
+    val color = MdColors.hashtagColor(s.tag)
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        Modifier
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(
+                    listOf(color.copy(alpha = 0.50f), color.copy(alpha = 0.26f))
+                )
             )
+            .border(1.dp, color.copy(alpha = 0.50f), shape)
+            .clickable { onPick(s.tag) }
+            .padding(horizontal = 11.dp, vertical = 8.dp),
+    ) {
+        Column {
+            Text("#${s.tag}", color = color, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "${s.noteCount} ${if (s.noteCount == 1) "note" else "notes"}  ·  ★${s.score}",
+                color = color.copy(alpha = 0.80f),
+                fontSize = 10.sp,
+            )
+            if (showScoreDetails) {
+                Spacer(Modifier.height(4.dp))
+                HorizontalDivider(color = color.copy(alpha = 0.25f), thickness = 1.dp)
+                Spacer(Modifier.height(3.dp))
+                ScoreRow("mentions", s.scoreMentions, color)
+                ScoreRow("overlap", s.scoreOverlap, color)
+                ScoreRow("length", s.scoreLength, color)
+                ScoreRow("group", s.scoreGroup, color)
+                ScoreRow("recency", s.scoreRecency, color)
+            }
         }
+    }
+}
+
+@Composable
+private fun ScoreRow(label: String, value: Int, color: androidx.compose.ui.graphics.Color) {
+    Row(
+        modifier = Modifier.width(IntrinsicSize.Max),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            fontSize = 9.sp,
+            color = color.copy(alpha = 0.60f),
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.width(52.dp),
+        )
+        Text(
+            "+$value",
+            fontSize = 9.sp,
+            color = color.copy(alpha = 0.85f),
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }
 
