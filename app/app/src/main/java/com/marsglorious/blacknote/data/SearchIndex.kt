@@ -33,16 +33,6 @@ class SearchIndex(dbPath: String) {
             )
             """.trimIndent()
         )
-        // Tracks which notes carry each hashtag for group-size and recency scoring.
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS hashtag_notes (
-                tag  TEXT NOT NULL,
-                path TEXT NOT NULL,
-                PRIMARY KEY (tag, path)
-            )
-            """.trimIndent()
-        )
     }
 
     @Synchronized
@@ -67,13 +57,11 @@ class SearchIndex(dbPath: String) {
             put("created", createdMillis)
         }
         db.replace("notes", null, values) // INSERT OR REPLACE keyed on path
-        updateHashtagNotes(path, tags.map { it.lowercase() })
     }
 
     @Synchronized
     fun delete(path: String) {
         db.delete("notes", "path = ?", arrayOf(path))
-        db.delete("hashtag_notes", "path = ?", arrayOf(path))
     }
 
     /** Cache read for instant startup: newest first (front-matter `created` wins, else mtime). */
@@ -154,66 +142,6 @@ class SearchIndex(dbPath: String) {
             db.endTransaction()
         }
         db.delete("notes", "path NOT IN (SELECT path FROM keep)", null)
-        db.delete("hashtag_notes", "path NOT IN (SELECT path FROM keep)", null)
-    }
-
-    /**
-     * Return suggested hashtags ranked by relevance to the given note content.
-     *
-     * Score components (higher = more relevant):
-     *  - Group size: 10 pts per note in the hashtag group
-     *  - Recency: up to 200 pts, decaying linearly to 0 over 30 days since last use
-     *  - Content similarity: 100 pts if the tag word appears in note words,
-     *    50 pts per tag sub-word (for compound tags like "work/projects") that matches
-     *
-     * Tags already present in the note ([excludeTags], lowercase) are omitted.
-     */
-    @Synchronized
-    fun suggestHashtags(
-        noteBody: String,
-        noteTitle: String,
-        excludeTags: Set<String>,
-        limit: Int = 20,
-    ): List<String> {
-        data class TagInfo(val count: Int, val lastUsedMillis: Long)
-        val tagInfo = HashMap<String, TagInfo>()
-        db.rawQuery(
-            """
-            SELECT hn.tag, COUNT(*) AS cnt, MAX(n.modified) AS last_used
-            FROM hashtag_notes hn
-            JOIN notes n ON hn.path = n.path
-            GROUP BY hn.tag
-            """.trimIndent(),
-            null,
-        ).use { c ->
-            while (c.moveToNext()) {
-                val tag = c.getString(0) ?: continue
-                tagInfo[tag] = TagInfo(c.getInt(1), c.getLong(2))
-            }
-        }
-        if (tagInfo.isEmpty()) return emptyList()
-
-        val contentWords = (noteBody + " " + noteTitle)
-            .lowercase()
-            .split(Regex("[^a-z0-9_/-]+"))
-            .filter { it.length >= 3 }
-            .toHashSet()
-
-        val now = System.currentTimeMillis()
-        return tagInfo.entries
-            .filter { it.key !in excludeTags }
-            .map { (tag, info) ->
-                val ageDays = (now - info.lastUsedMillis) / 86_400_000L
-                val groupScore = info.count.toLong() * 10
-                val recencyScore = (200L * (1.0 - (ageDays / 30.0).coerceIn(0.0, 1.0))).toLong()
-                val tagWords = tag.split(Regex("[^a-z0-9_/-]+")).filter { it.length >= 3 }
-                val simScore = tagWords.sumOf { if (it in contentWords) 50L else 0L } +
-                    if (tag in contentWords) 100L else 0L
-                tag to (groupScore + recencyScore + simScore)
-            }
-            .sortedByDescending { it.second }
-            .take(limit)
-            .map { it.first }
     }
 
     // Column order: path, parent, title, preview, modified, created, tags, label
@@ -230,24 +158,4 @@ class SearchIndex(dbPath: String) {
 
     private fun splitTags(joined: String?): List<String> =
         joined?.split(' ')?.filter { it.isNotEmpty() } ?: emptyList()
-
-    private fun updateHashtagNotes(path: String, tags: List<String>) {
-        db.delete("hashtag_notes", "path = ?", arrayOf(path))
-        if (tags.isEmpty()) return
-        db.beginTransaction()
-        try {
-            val stmt = db.compileStatement(
-                "INSERT OR IGNORE INTO hashtag_notes(tag, path) VALUES (?, ?)"
-            )
-            for (tag in tags) {
-                stmt.bindString(1, tag)
-                stmt.bindString(2, path)
-                stmt.executeInsert()
-                stmt.clearBindings()
-            }
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
-        }
-    }
 }

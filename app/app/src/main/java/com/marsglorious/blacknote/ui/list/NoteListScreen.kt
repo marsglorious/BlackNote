@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -44,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -283,6 +285,7 @@ private fun ListView(state: UiState, viewModel: AppViewModel) {
                         indent = row.indent,
                         idNumber = noteIds[row.note.path] ?: 0,
                         locationLabel = absolutePathFromUri(row.note.path),
+                        showLocation = state.showFileLocation,
                         pinned = row.note.path in state.pinned,
                         // Notes nested in a folder carry that folder's colour; top-level notes don't.
                         accentColor = if (row.indent > 0) MdColors.folderColor(row.note.parent) else null,
@@ -493,6 +496,7 @@ internal fun NoteCard(
     indent: Int,
     idNumber: Int = 0,
     locationLabel: String = "/",
+    showLocation: Boolean = true,
     pinned: Boolean = false,
     accentColor: androidx.compose.ui.graphics.Color? = null,
     titleHighlights: List<Int> = emptyList(),
@@ -530,6 +534,9 @@ internal fun NoteCard(
                 .weight(1f)
                 .padding(horizontal = 14.dp, vertical = 12.dp)
         ) {
+            // Title shares its row with the date and id: the title takes whatever width it
+            // needs (ellipsised) and the metadata sits to its right, saving the vertical space
+            // a separate metadata row used to cost.
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (pinned) {
                     Icon(
@@ -539,11 +546,12 @@ internal fun NoteCard(
                     Spacer(Modifier.width(4.dp))
                 }
                 Text(
-                    formatDate(note.displayMillis),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MdColors.OnSurfaceDim,
+                    styledTitle,
+                    style = MaterialTheme.typography.titleMedium.copy(color = MdColors.OnSurface),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
                 note.label?.let { lbl ->
                     Box(
                         Modifier
@@ -555,16 +563,21 @@ internal fun NoteCard(
                     }
                     Spacer(Modifier.width(6.dp))
                 }
+                Text(
+                    formatDate(note.displayMillis),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MdColors.MetaText,
+                )
                 if (idNumber > 0) {
-                    Text("#$idNumber", fontSize = 11.sp, color = MdColors.OnSurfaceDim)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "$idNumber",
+                        fontSize = 11.sp,
+                        color = MdColors.Cyan,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                styledTitle,
-                style = MaterialTheme.typography.titleMedium.copy(color = MdColors.OnSurface),
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
             if (note.preview.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -585,14 +598,16 @@ internal fun NoteCard(
                     onTagClick = onTagClick,
                 )
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                locationLabel,
-                fontSize = 10.sp,
-                color = MdColors.OnSurfaceDim,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (showLocation) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    locationLabel,
+                    fontSize = 10.sp,
+                    color = MdColors.MetaText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         }
         DropdownMenu(
@@ -681,7 +696,7 @@ private fun formatDate(ms: Long): String = dateFmt.format(Date(ms)).lowercase()
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun TagRow(
+internal fun TagRow(
     tags: List<String>,
     virtualFolderTag: String? = null,
     folderColor: androidx.compose.ui.graphics.Color? = null,
@@ -693,46 +708,53 @@ private fun TagRow(
     ) {
         // Virtual folder hashtag shown first so folder membership reads by colour.
         if (virtualFolderTag != null && folderColor != null) {
-            Box(
-                Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(folderColor.copy(alpha = 0.18f))
-                    .clickable { onTagClick(virtualFolderTag) }
-                    .padding(horizontal = 6.dp, vertical = 1.dp)
-            ) {
-                Text(
-                    "#$virtualFolderTag",
-                    fontSize = 10.sp,
-                    color = folderColor,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
+            HashtagChip(virtualFolderTag, folderColor, fontSize = 10.sp) { onTagClick(virtualFolderTag) }
         }
         // Show up to 4 tags; "+N" chip if more
         val visible = tags.take(4)
         for (tag in visible) {
-            val color = MdColors.hashtagColor(tag)
-            Box(
-                Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(color.copy(alpha = 0.18f))
-                    .clickable { onTagClick(tag) }
-                    .padding(horizontal = 6.dp, vertical = 1.dp)
-            ) {
-                Text("#$tag", fontSize = 10.sp, color = color, fontWeight = FontWeight.Medium)
-            }
+            HashtagChip(tag, MdColors.hashtagColor(tag), fontSize = 10.sp) { onTagClick(tag) }
         }
         if (tags.size > visible.size) {
             val more = tags.size - visible.size
             Box(
                 Modifier
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RoundedCornerShape(7.dp))
                     .background(MdColors.SurfaceHi)
-                    .padding(horizontal = 6.dp, vertical = 1.dp)
+                    .border(1.dp, MdColors.OnSurfaceFaint.copy(alpha = 0.35f), RoundedCornerShape(7.dp))
+                    .padding(horizontal = 3.dp, vertical = 0.dp)
             ) {
-                Text("+$more", fontSize = 10.sp, color = MdColors.OnSurfaceDim, fontWeight = FontWeight.Medium)
+                Text("+$more", fontSize = 10.sp, color = MdColors.OnSurfaceDim, fontWeight = FontWeight.SemiBold)
             }
         }
+    }
+}
+
+/**
+ * A bevelled hashtag pill: a top-to-bottom colour gradient with a matching outline gives it
+ * a raised, glassy look rather than a flat tint. [label] is rendered as `#label`.
+ */
+@Composable
+private fun HashtagChip(
+    label: String,
+    color: androidx.compose.ui.graphics.Color,
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(7.dp)
+    Box(
+        Modifier
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(
+                    listOf(color.copy(alpha = 0.52f), color.copy(alpha = 0.28f))
+                )
+            )
+            .border(1.dp, color.copy(alpha = 0.55f), shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 3.dp, vertical = 0.dp)
+    ) {
+        Text("#$label", fontSize = fontSize, color = color, fontWeight = FontWeight.SemiBold)
     }
 }
 

@@ -233,7 +233,7 @@ private fun AnnotatedString.Builder.consumeHashtag(line: String, i: Int): Int? {
     val start = length
     append(tag)
     addStyle(
-        SpanStyle(color = color, background = color.copy(alpha = 0.18f), fontWeight = FontWeight.Medium),
+        SpanStyle(color = color, background = color.copy(alpha = 0.30f), fontWeight = FontWeight.SemiBold),
         start, length,
     )
     return end
@@ -412,7 +412,7 @@ private fun AnnotatedString.Builder.applyHashtags(src: String) {
             val tagName = src.substring(start, end).lowercase()
             val color = MdColors.hashtagColor(tagName)
             addStyle(
-                SpanStyle(color = color, background = color.copy(alpha = 0.18f), fontWeight = FontWeight.Medium),
+                SpanStyle(color = color, background = color.copy(alpha = 0.30f), fontWeight = FontWeight.SemiBold),
                 i, end,
             )
         }

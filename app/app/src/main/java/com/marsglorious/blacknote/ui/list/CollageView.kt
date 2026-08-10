@@ -93,6 +93,7 @@ fun CollageGrid(state: UiState, viewModel: AppViewModel) {
                     onDelete = { viewModel.deleteToTrash(note.path, note.parent) },
                     onPin = { viewModel.togglePin(note.path) },
                     onShare = { viewModel.shareNote(note) },
+                    onTagClick = { tag -> viewModel.setQuery(tag) },
                 )
             }
         }
@@ -120,6 +121,7 @@ internal fun CollageTile(
     onDelete: () -> Unit,
     onPin: () -> Unit = {},
     onShare: () -> Unit = {},
+    onTagClick: (String) -> Unit = {},
 ) {
     val titleText = note.title.ifBlank { "Untitled" }
     val styledTitle = androidx.compose.runtime.remember(titleText, titleHighlights) { highlight(titleText, titleHighlights) }
@@ -164,6 +166,10 @@ internal fun CollageTile(
                     maxLines = if (note.preview.length > 80) 8 else 4,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (note.tags.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                TagRow(tags = note.tags, onTagClick = onTagClick)
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {

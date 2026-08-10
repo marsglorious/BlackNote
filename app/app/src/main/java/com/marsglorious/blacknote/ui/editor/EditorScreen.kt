@@ -5,6 +5,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -31,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -41,8 +43,10 @@ import androidx.compose.ui.unit.sp
 import com.marsglorious.blacknote.ui.theme.MdColors
 import com.marsglorious.blacknote.viewmodel.AppViewModel
 import com.marsglorious.blacknote.viewmodel.EditorMode
+import com.marsglorious.blacknote.viewmodel.HashtagSuggestion
 import com.marsglorious.blacknote.viewmodel.UiState
 import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
 fun EditorScreen(state: UiState, viewModel: AppViewModel, onBack: () -> Unit) {
@@ -188,7 +192,7 @@ private fun BodyField(value: TextFieldValue, onChange: (TextFieldValue) -> Unit,
 
 @Composable
 private fun HashtagPickerRow(
-    suggestions: List<String>,
+    suggestions: List<HashtagSuggestion>,
     onPick: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -211,16 +215,30 @@ private fun HashtagPickerRow(
                 modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                items(suggestions) { tag ->
-                    val color = MdColors.hashtagColor(tag)
+                items(suggestions) { s ->
+                    val color = MdColors.hashtagColor(s.tag)
+                    val shape = RoundedCornerShape(9.dp)
                     Box(
                         Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(color.copy(alpha = 0.18f))
-                            .clickable { onPick(tag) }
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                            .clip(shape)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(color.copy(alpha = 0.52f), color.copy(alpha = 0.28f))
+                                )
+                            )
+                            .border(1.dp, color.copy(alpha = 0.55f), shape)
+                            .clickable { onPick(s.tag) }
+                            .padding(horizontal = 7.dp, vertical = 4.dp),
                     ) {
-                        Text("#$tag", color = color, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("#${s.tag}", color = color, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${s.noteCount} ${if (s.noteCount == 1) "note" else "notes"} · score ${s.score}",
+                                color = color.copy(alpha = 0.85f),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
                     }
                 }
             }
@@ -241,7 +259,7 @@ private fun EditorScrollIndicator(scroll: ScrollState, modifier: Modifier) {
     val alpha = remember { Animatable(0f) }
     LaunchedEffect(scroll.value) {
         alpha.animateTo(1f, tween(80))
-        delay(1200)
+        delay(1200.milliseconds)
         alpha.animateTo(0f, tween(360))
     }
     if (scroll.maxValue > 0) {

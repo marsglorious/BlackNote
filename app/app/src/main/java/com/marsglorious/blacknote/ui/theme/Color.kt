@@ -10,7 +10,11 @@ object MdColors {
     val OnSurface      = Color(0xFFECECEC)
     val OnSurfaceDim   = Color(0xFFA0A0A0)
     val OnSurfaceFaint = Color(0xFF6B6B6B)
+    // Metadata (dates, file locations) — a subtly blue-tinted grey so it reads as distinct
+    // from the neutral-grey body/preview text without drawing attention.
+    val MetaText       = Color(0xFF8C97A8)
     val Accent         = Color(0xFF8AB4F8)
+    val Cyan           = Color(0xFF7E9AA0)
     val Divider        = Color(0x14FFFFFF)
     val LabelChipBg    = Color(0xFF2D3950)
     val LabelChipFg    = Color(0xFFB0C8F0)

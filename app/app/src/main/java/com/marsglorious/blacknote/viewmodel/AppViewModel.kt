@@ -25,10 +25,27 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 enum class Screen { LIST, EDITOR, TRASH, SETTINGS }
 enum class ListViewMode { LIST, COLLAGE }
 enum class EditorMode { EDIT, RENDER }
+
+/**
+ * A ranked hashtag suggestion for the picker.
+ *
+ * @param tag        the hashtag (without the leading '#'), in its most-recently-used casing
+ * @param noteCount  how many notes in the tree already carry this tag
+ * @param score      importance score for the current note (see [AppViewModel.rankHashtagSuggestions]):
+ *                   combines how often the tag's words are mentioned here, how similar this note
+ *                   is to the notes already tagged with it (shared vocabulary + comparable length),
+ *                   plus the tag's popularity and recency.
+ */
+data class HashtagSuggestion(
+    val tag: String,
+    val noteCount: Int,
+    val score: Int,
+)
 
 /** How the note list is ordered. Pinned notes always sort first regardless of mode. */
 enum class SortMode(val label: String) {
@@ -74,6 +91,8 @@ data class UiState(
     /** Path → (title char positions, preview char positions). Empty when not searching. */
     val searchHighlights: Map<String, Pair<List<Int>, List<Int>>> = emptyMap(),
     val sortMode: SortMode = SortMode.DATE_DESC,
+    /** Whether the folder-path line is shown under each note in the list. */
+    val showFileLocation: Boolean = true,
     val pinned: Set<String> = emptySet(),
     val trashNotes: List<Note> = emptyList(),
     val editingPath: String? = null,
@@ -105,7 +124,7 @@ data class UiState(
     /** True while the hashtag suggestion picker row is visible above the format toolbar. */
     val hashtagPickerOpen: Boolean = false,
     /** Ranked hashtag suggestions for the current note; populated when [hashtagPickerOpen] = true. */
-    val hashtagSuggestions: List<String> = emptyList(),
+    val hashtagSuggestions: List<HashtagSuggestion> = emptyList(),
 )
 
 sealed class FolderPickerTask {
@@ -207,7 +226,14 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
             ?: emptySet()
         val pinned = repo.fs.getPref(PREF_PINNED)?.split('\n')?.filter { it.isNotBlank() }?.toSet()
             ?: emptySet()
-        _ui.update { it.copy(sortMode = sort, listMode = listMode, expandedFolders = expanded, pinned = pinned) }
+        val showLocation = repo.fs.getPref(PREF_SHOW_LOCATION) != "false"
+        _ui.update { it.copy(sortMode = sort, listMode = listMode, expandedFolders = expanded,
+            pinned = pinned, showFileLocation = showLocation) }
+    }
+
+    fun setShowFileLocation(show: Boolean) {
+        _ui.update { it.copy(showFileLocation = show) }
+        viewModelScope.launch { repo.fs.setPref(PREF_SHOW_LOCATION, show.toString()) }
     }
 
     fun onFolderPicked(path: String) {
@@ -550,7 +576,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
             // even for files that exist. A second attempt usually succeeds.
             var body = repo.read(note.path)
             if (body == null) {
-                delay(80)
+                delay(80.milliseconds)
                 body = repo.read(note.path)
             }
             if (body == null) {
@@ -729,14 +755,20 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                     // Only a real content write advances the modified date; a rename-only close
                     // keeps the file's existing mtime (renaming doesn't touch it).
                     val mtime = if (bodyChanged) now else (original?.modifiedMillis ?: now)
+                    // Re-derive tags/label from the persisted text so hashtags the user just
+                    // typed appear in the list row immediately. Reusing original?.tags kept the
+                    // stale set until the next restart re-read them from the index cache.
+                    val meta = runCatching {
+                        com.marsglorious.blacknote.data.extractMeta(finalUri, parent, fileName, persisted, mtime)
+                    }.getOrNull()
                     val justSaved = Note(
                         path = finalUri, parent = parent,
                         title = com.marsglorious.blacknote.data.titleFromFileName(fileName),
                         preview = persisted.take(200),
                         modifiedMillis = mtime,
                         createdMillis = original?.createdMillis ?: now,
-                        tags = original?.tags ?: emptyList(),
-                        label = original?.label,
+                        tags = meta?.tags ?: original?.tags ?: emptyList(),
+                        label = meta?.label ?: original?.label,
                     )
                     if (finalUri != path) pendingRemovals.add(path)
                     if (isNewNote) pendingNewNotePath = null
@@ -1026,35 +1058,124 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
     }
     fun dismissSelfTests() { _ui.update { it.copy(selfTestResults = null) } }
 
-    /** Open the hashtag picker: score + load suggestions for the current note body. */
+    /** Open the hashtag picker: rank suggestions from tags used across the whole tree. */
     fun openHashtagPicker() {
-        viewModelScope.launch {
-            val s = _ui.value
-            val body = s.editingBody.text
-            val title = s.editingTitle.text
-            val existing = Regex("""(?<![a-zA-Z0-9_])#([a-zA-Z][a-zA-Z0-9_\-/]*)""")
-                .findAll("$body $title")
-                .map { it.groupValues[1].lowercase() }
-                .toHashSet()
-            val suggestions = repo.suggestHashtags(body, title, existing)
-            _ui.update { it.copy(hashtagPickerOpen = true, hashtagSuggestions = suggestions) }
-        }
+        val s = _ui.value
+        val body = s.editingBody.text
+        val title = s.editingTitle.text
+        val existing = Regex("""(?<![a-zA-Z0-9_])#([a-zA-Z][a-zA-Z0-9_\-/]*)""")
+            .findAll("$body $title")
+            .map { it.groupValues[1].lowercase() }
+            .toHashSet()
+        val suggestions = rankHashtagSuggestions(s.tree.notes, body, title, existing)
+        _ui.update { it.copy(hashtagPickerOpen = true, hashtagSuggestions = suggestions) }
     }
+
+    /**
+     * Rank hashtags collected from every note in the tree by relevance to the current note.
+     * Sourced from the in-memory tree — the same tags the list renders — rather than the DB
+     * index, so a tag added moments ago is suggestable immediately and the picker can't come
+     * up empty while the list plainly shows tags.
+     *
+     * The importance score for each tag blends:
+     *  - **Mentions** (×45): how often the tag's word(s) already appear in this note's text.
+     *  - **Vocabulary overlap** (×8/word): how many of this note's words also appear in the
+     *    notes already carrying the tag — "is this note about the same things?".
+     *  - **Length similarity** (up to 40): how close this note's length is to the average
+     *    length of notes with the tag — a rough proxy for matching style/format.
+     *  - **Popularity** (×10/note) and **recency** (up to 100, decaying over 30 days).
+     */
+    private fun rankHashtagSuggestions(
+        notes: List<Note>,
+        body: String,
+        title: String,
+        excludeTags: Set<String>,
+        limit: Int = 20,
+    ): List<HashtagSuggestion> {
+        // Aggregate, per tag, the info needed to score: usage count, recency, the combined
+        // vocabulary of its notes, and their average length.
+        class TagAgg(var display: String) {
+            var count = 0
+            var lastUsedMillis = 0L
+            val vocab = HashSet<String>()
+            var totalLen = 0L
+        }
+        val agg = HashMap<String, TagAgg>()
+        for (n in notes) {
+            if (n.tags.isEmpty()) continue
+            val noteWords = wordsOf(n.title + " " + n.preview)
+            val noteLen = (n.title.length + n.preview.length).toLong()
+            for (raw in n.tags) {
+                if (raw.isBlank()) continue
+                val a = agg.getOrPut(raw.lowercase()) { TagAgg(raw) }
+                a.count++
+                if (n.modifiedMillis > a.lastUsedMillis) {
+                    a.lastUsedMillis = n.modifiedMillis
+                    a.display = raw // keep the casing of the most recently used note
+                }
+                a.vocab.addAll(noteWords)
+                a.totalLen += noteLen
+            }
+        }
+        if (agg.isEmpty()) return emptyList()
+
+        val currentText = "$body $title"
+        val currentWords = wordsOf(currentText)
+        val currentWordSet = currentWords.toHashSet()
+        val currentLen = currentText.length.toLong()
+        val now = System.currentTimeMillis()
+
+        return agg.entries
+            .filter { it.key !in excludeTags }
+            .map { (key, a) ->
+                val tagWords = key.split(Regex("[^a-z0-9_/-]+")).filter { it.length >= 3 }
+                // Mentions: occurrences of the tag (or its sub-words) in the current note.
+                val mentions = currentWords.count { it == key } +
+                    tagWords.sumOf { tw -> currentWords.count { it == tw } }
+                val mentionScore = mentions.toLong() * 45
+                // Overlap: current note's words that also appear in the tag group's vocabulary.
+                val overlap = if (currentWordSet.isEmpty()) 0 else currentWordSet.count { it in a.vocab }
+                val overlapScore = overlap.toLong() * 8
+                // Length similarity to the tag group's average note length.
+                val avgLen = if (a.count > 0) a.totalLen / a.count else 0L
+                val lengthScore = if (avgLen == 0L || currentLen == 0L) 0L else {
+                    val diff = kotlin.math.abs(currentLen - avgLen).toDouble() / maxOf(currentLen, avgLen)
+                    (40 * (1.0 - diff.coerceIn(0.0, 1.0))).toLong()
+                }
+                val groupScore = a.count.toLong() * 10
+                val ageDays = (now - a.lastUsedMillis) / 86_400_000L
+                val recencyScore = (100 * (1.0 - (ageDays / 30.0).coerceIn(0.0, 1.0))).toLong()
+                val total = mentionScore + overlapScore + lengthScore + groupScore + recencyScore
+                HashtagSuggestion(tag = a.display, noteCount = a.count, score = total.toInt())
+            }
+            .sortedByDescending { it.score }
+            .take(limit)
+    }
+
+    /** Split text into lowercase word tokens (≥3 chars) for similarity/mention analysis. */
+    private fun wordsOf(text: String): List<String> =
+        text.lowercase().split(Regex("[^a-z0-9_/-]+")).filter { it.length >= 3 }
 
     fun closeHashtagPicker() {
         _ui.update { it.copy(hashtagPickerOpen = false) }
     }
 
-    /** Insert [tag] as `#tag ` at the current cursor position (or end of body). */
+    /**
+     * Append [tag] as `#tag ` at the end of the note body. Tags go to the bottom rather than
+     * at the cursor because tapping a picker chip pulls focus off the editor, leaving a stale
+     * (often position-0) caret — inserting there dropped the tag at the top of the note.
+     * Consecutive tags stay grouped on one line; otherwise the tag starts a fresh line.
+     */
     fun insertHashtag(tag: String) {
         val cur = _ui.value.editingBody
-        val pos = if (cur.selection.collapsed) cur.selection.start else cur.selection.end
-        val needsSpace = pos > 0 && cur.text.getOrNull(pos - 1)?.let { it != ' ' && it != '\n' } == true
-        val insertion = (if (needsSpace) " " else "") + "#$tag "
-        val newText = cur.text.substring(0, pos) + insertion + cur.text.substring(pos)
-        val newPos = pos + insertion.length
+        val trimmed = cur.text.trimEnd()
+        val newText = when {
+            trimmed.isEmpty() -> "#$tag "
+            trimmed.substringAfterLast('\n').trimStart().startsWith("#") -> "$trimmed #$tag "
+            else -> "$trimmed\n\n#$tag "
+        }
         val next = androidx.compose.ui.text.input.TextFieldValue(
-            newText, androidx.compose.ui.text.TextRange(newPos)
+            newText, androidx.compose.ui.text.TextRange(newText.length)
         )
         history.record(EditorSnapshot(_ui.value.editingTitle, next))
         _ui.update { it.copy(
@@ -1100,6 +1221,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         const val PREF_LIST_MODE = "ui_list_mode"
         const val PREF_EXPANDED = "ui_expanded_folders"
         const val PREF_PINNED = "ui_pinned_paths"
+        const val PREF_SHOW_LOCATION = "ui_show_file_location"
 
         fun factory(app: App) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
