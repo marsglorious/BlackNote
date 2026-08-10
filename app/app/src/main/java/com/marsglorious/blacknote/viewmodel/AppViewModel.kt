@@ -130,6 +130,8 @@ data class UiState(
     val hashtagPickerOpen: Boolean = false,
     /** Ranked hashtag suggestions for the current note; populated when [hashtagPickerOpen] = true. */
     val hashtagSuggestions: List<HashtagSuggestion> = emptyList(),
+    /** Tags already in the note when the picker opened — drives the "In this note" section. */
+    val hashtagPickerExisting: List<String> = emptyList(),
     /** When true, each suggestion chip shows the per-component score breakdown. */
     val showHashtagScoreDetails: Boolean = false,
 )
@@ -1077,12 +1079,14 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         val s = _ui.value
         val body = s.editingBody.text
         val title = s.editingTitle.text
-        val existing = Regex("""(?<![a-zA-Z0-9_])#([a-zA-Z][a-zA-Z0-9_\-/]*)""")
-            .findAll("$body $title")
-            .map { it.groupValues[1].lowercase() }
-            .toHashSet()
-        val suggestions = rankHashtagSuggestions(s.tree.notes, body, title, existing)
-        _ui.update { it.copy(hashtagPickerOpen = true, hashtagSuggestions = suggestions) }
+        val tagRegex = Regex("""(?<![a-zA-Z0-9_])#([a-zA-Z][a-zA-Z0-9_\-/]*)""")
+        val existingList = tagRegex.findAll("$body $title")
+            .map { it.groupValues[1] }
+            .distinctBy { it.lowercase() }
+            .toList()
+        val existingLower = existingList.map { it.lowercase() }.toHashSet()
+        val suggestions = rankHashtagSuggestions(s.tree.notes, body, title, existingLower)
+        _ui.update { it.copy(hashtagPickerOpen = true, hashtagSuggestions = suggestions, hashtagPickerExisting = existingList) }
     }
 
     /**
@@ -1178,7 +1182,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         text.lowercase().split(Regex("[^a-z0-9_/-]+")).filter { it.length >= 3 }
 
     fun closeHashtagPicker() {
-        _ui.update { it.copy(hashtagPickerOpen = false) }
+        _ui.update { it.copy(hashtagPickerOpen = false, hashtagPickerExisting = emptyList()) }
     }
 
     /**
@@ -1199,11 +1203,51 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
             newText, androidx.compose.ui.text.TextRange(newText.length)
         )
         history.record(EditorSnapshot(_ui.value.editingTitle, next))
+        val tagLower = tag.lowercase()
+        val newExisting = _ui.value.hashtagPickerExisting.let { ex ->
+            if (ex.any { it.lowercase() == tagLower }) ex else ex + tag
+        }
         _ui.update { it.copy(
             editingBody = next,
             canUndo = history.canUndo, canRedo = history.canRedo,
-            hashtagPickerOpen = false,
+            hashtagPickerExisting = newExisting,
         ) }
+        scheduleSave()
+    }
+
+    /**
+     * Toggle a hashtag in the note body without closing the picker.
+     * If the tag is currently in the body it is removed; otherwise it is appended.
+     */
+    fun toggleHashtag(tag: String) {
+        val cur = _ui.value.editingBody
+        val tagLower = tag.lowercase()
+        val inNote = Regex("""(?<![a-zA-Z0-9_])#([a-zA-Z][a-zA-Z0-9_\-/]*)""")
+            .findAll(cur.text)
+            .any { it.groupValues[1].lowercase() == tagLower }
+
+        val newText: String
+        if (inNote) {
+            newText = Regex(""" ?#${Regex.escape(tagLower)}(?![a-zA-Z0-9_\-/])""", RegexOption.IGNORE_CASE)
+                .replace(cur.text, "")
+                .replace(Regex("(?m)^[ \t]+(#[a-zA-Z])"), "$1")
+                .replace(Regex("(?m)^[ \t]+$"), "")
+                .replace(Regex("\n{3,}"), "\n\n")
+                .trimEnd()
+        } else {
+            val trimmed = cur.text.trimEnd()
+            newText = when {
+                trimmed.isEmpty() -> "#$tag "
+                trimmed.substringAfterLast('\n').trimStart().startsWith("#") -> "$trimmed #$tag "
+                else -> "$trimmed\n\n#$tag "
+            }
+        }
+
+        val next = androidx.compose.ui.text.input.TextFieldValue(
+            newText, androidx.compose.ui.text.TextRange(newText.length)
+        )
+        history.record(EditorSnapshot(_ui.value.editingTitle, next))
+        _ui.update { it.copy(editingBody = next, canUndo = history.canUndo, canRedo = history.canRedo) }
         scheduleSave()
     }
 

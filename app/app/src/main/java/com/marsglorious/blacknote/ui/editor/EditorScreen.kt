@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
@@ -92,10 +93,19 @@ fun EditorScreen(state: UiState, viewModel: AppViewModel, onBack: () -> Unit) {
                 modifier = Modifier.weight(1f),
             )
             if (state.hashtagPickerOpen) {
+                val currentInNote = remember(state.editingBody.text) {
+                    Regex("""(?<![a-zA-Z0-9_])#([a-zA-Z][a-zA-Z0-9_\-/]*)""")
+                        .findAll(state.editingBody.text)
+                        .map { it.groupValues[1].lowercase() }
+                        .toSet()
+                }
                 HashtagPickerPanel(
+                    existingTags = state.hashtagPickerExisting,
+                    currentInNote = currentInNote,
                     suggestions = state.hashtagSuggestions,
                     showScoreDetails = state.showHashtagScoreDetails,
-                    onPick = { viewModel.insertHashtag(it) },
+                    onToggle = { viewModel.toggleHashtag(it) },
+                    onPickSuggestion = { viewModel.insertHashtag(it) },
                     onDismiss = { viewModel.closeHashtagPicker() },
                 )
             }
@@ -204,21 +214,25 @@ private fun BodyField(value: TextFieldValue, onChange: (TextFieldValue) -> Unit,
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HashtagPickerPanel(
+    existingTags: List<String>,
+    currentInNote: Set<String>,
     suggestions: List<HashtagSuggestion>,
     showScoreDetails: Boolean,
-    onPick: (String) -> Unit,
+    onToggle: (String) -> Unit,
+    onPickSuggestion: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(true) }
-    // Half of the screen height for the chip grid area.
     val halfScreen = (LocalConfiguration.current.screenHeightDp / 2).dp
+    val existingSet = existingTags.map { it.lowercase() }.toHashSet()
+    val filteredSuggestions = suggestions.filter { it.tag.lowercase() !in existingSet }
+    val totalCount = existingTags.size + filteredSuggestions.size
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(MdColors.SurfaceHi2),
     ) {
-        // Header bar: tap anywhere to collapse/expand; X to close entirely.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -227,15 +241,15 @@ private fun HashtagPickerPanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "Hashtag suggestions",
+                "Hashtags",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = MdColors.OnSurfaceDim,
                 modifier = Modifier.weight(1f),
             )
-            if (suggestions.isNotEmpty()) {
+            if (totalCount > 0) {
                 Text(
-                    "${suggestions.size}",
+                    "$totalCount",
                     fontSize = 11.sp,
                     color = MdColors.OnSurfaceFaint,
                     modifier = Modifier.padding(end = 6.dp),
@@ -265,7 +279,36 @@ private fun HashtagPickerPanel(
         ) {
             Column {
                 HorizontalDivider(color = MdColors.Divider, thickness = 1.dp)
-                if (suggestions.isEmpty()) {
+
+                // "In this note" section — tags already present when picker opened.
+                if (existingTags.isNotEmpty()) {
+                    Text(
+                        "IN THIS NOTE",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MdColors.OnSurfaceFaint,
+                        modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 2.dp),
+                    )
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        for (tag in existingTags) {
+                            ExistingTagChip(
+                                tag = tag,
+                                active = tag.lowercase() in currentInNote,
+                                onToggle = { onToggle(tag) },
+                            )
+                        }
+                    }
+                    HorizontalDivider(color = MdColors.Divider, thickness = 1.dp)
+                }
+
+                // Suggestions section.
+                if (filteredSuggestions.isEmpty() && existingTags.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -280,7 +323,16 @@ private fun HashtagPickerPanel(
                             modifier = Modifier.padding(horizontal = 24.dp),
                         )
                     }
-                } else {
+                } else if (filteredSuggestions.isNotEmpty()) {
+                    if (existingTags.isNotEmpty()) {
+                        Text(
+                            "SUGGESTIONS",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MdColors.OnSurfaceFaint,
+                            modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 2.dp),
+                        )
+                    }
                     val chipScroll = rememberScrollState()
                     Box(
                         Modifier
@@ -295,14 +347,34 @@ private fun HashtagPickerPanel(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            for (s in suggestions) {
-                                HashtagChip(s, showScoreDetails, onPick)
+                            for (s in filteredSuggestions) {
+                                HashtagChip(s, showScoreDetails, onPickSuggestion)
                             }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ExistingTagChip(tag: String, active: Boolean, onToggle: () -> Unit) {
+    val color = MdColors.hashtagColor(tag)
+    val shape = RoundedCornerShape(10.dp)
+    val bgTop = if (active) color.copy(alpha = 0.85f) else color.copy(alpha = 0.22f)
+    val bgBot = if (active) color.copy(alpha = 0.65f) else color.copy(alpha = 0.10f)
+    val borderAlpha = if (active) 1.0f else 0.28f
+    val textAlpha = if (active) 1.0f else 0.40f
+    Box(
+        Modifier
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(bgTop, bgBot)))
+            .border(if (active) 1.5.dp else 1.dp, color.copy(alpha = borderAlpha), shape)
+            .clickable { onToggle() }
+            .padding(horizontal = 11.dp, vertical = 7.dp),
+    ) {
+        Text("#$tag", color = color.copy(alpha = textAlpha), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -337,35 +409,40 @@ private fun HashtagChip(
                 Spacer(Modifier.height(4.dp))
                 HorizontalDivider(color = color.copy(alpha = 0.25f), thickness = 1.dp)
                 Spacer(Modifier.height(3.dp))
-                ScoreRow("mentions", s.scoreMentions, color)
-                ScoreRow("overlap", s.scoreOverlap, color)
-                ScoreRow("length", s.scoreLength, color)
-                ScoreRow("group", s.scoreGroup, color)
-                ScoreRow("recency", s.scoreRecency, color)
+                ScoreRow("mentions", s.scoreMentions, "How often the tag's words appear in this note", color)
+                ScoreRow("overlap", s.scoreOverlap, "Words this note shares with notes already tagged with it", color)
+                ScoreRow("length", s.scoreLength, "How close this note's length is to the tag group's average", color)
+                ScoreRow("group", s.scoreGroup, "How many other notes already carry this tag", color)
+                ScoreRow("recency", s.scoreRecency, "How recently any note was tagged with it — decays over 30 days", color)
             }
         }
     }
 }
 
 @Composable
-private fun ScoreRow(label: String, value: Int, color: androidx.compose.ui.graphics.Color) {
-    Row(
-        modifier = Modifier.width(IntrinsicSize.Max),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+private fun ScoreRow(label: String, value: Int, description: String, color: androidx.compose.ui.graphics.Color) {
+    Column(Modifier.padding(bottom = 3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                label,
+                fontSize = 9.sp,
+                color = color.copy(alpha = 0.60f),
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.width(52.dp),
+            )
+            Text(
+                "+$value",
+                fontSize = 9.sp,
+                color = color.copy(alpha = 0.85f),
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Medium,
+            )
+        }
         Text(
-            label,
-            fontSize = 9.sp,
-            color = color.copy(alpha = 0.60f),
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.width(52.dp),
-        )
-        Text(
-            "+$value",
-            fontSize = 9.sp,
-            color = color.copy(alpha = 0.85f),
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Medium,
+            description,
+            fontSize = 8.sp,
+            color = color.copy(alpha = 0.48f),
+            fontStyle = FontStyle.Italic,
         )
     }
 }
