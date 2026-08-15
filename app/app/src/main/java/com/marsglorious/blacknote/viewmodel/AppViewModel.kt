@@ -1096,12 +1096,13 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
      * up empty while the list plainly shows tags.
      *
      * The importance score for each tag blends:
-     *  - **Mentions** (×45): how often the tag's word(s) already appear in this note's text.
-     *  - **Vocabulary overlap** (×8/word): how many of this note's words also appear in the
-     *    notes already carrying the tag — "is this note about the same things?".
-     *  - **Length similarity** (up to 40): how close this note's length is to the average
-     *    length of notes with the tag — a rough proxy for matching style/format.
-     *  - **Popularity** (×10/note) and **recency** (up to 100, decaying over 30 days).
+     *  - **Mentions** (×200, cap 1000): how often the tag's word(s) appear in this note — the
+     *    primary relevance signal.
+     *  - **Vocabulary overlap** (0–350): fraction of this note's unique words that appear in any
+     *    note already carrying the tag. Normalized so mega-popular tags don't win just from
+     *    having a huge accumulated vocabulary.
+     *  - **Popularity** (log₁₀ scale, cap 60): minor tie-breaker.
+     *  - **Length similarity** (cap 25) and **recency** (cap 50): weak secondary signals.
      */
     private fun rankHashtagSuggestions(
         notes: List<Note>,
@@ -1150,19 +1151,23 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                 // Mentions: occurrences of the tag (or its sub-words) in the current note.
                 val mentions = currentWords.count { it == key } +
                     tagWords.sumOf { tw -> currentWords.count { it == tw } }
-                val mentionScore = mentions.toLong() * 45
-                // Overlap: current note's words that also appear in the tag group's vocabulary.
-                val overlap = if (currentWordSet.isEmpty()) 0 else currentWordSet.count { it in a.vocab }
-                val overlapScore = overlap.toLong() * 8
+                val mentionScore = (mentions.toLong() * 200).coerceAtMost(1000)
+                // Overlap: fraction of this note's vocabulary present in the tag group's vocab.
+                // Using ratio (not raw count) prevents popular tags from winning via huge accumulated vocab.
+                val overlapScore = if (currentWordSet.isEmpty()) 0L else {
+                    val ratio = currentWordSet.count { it in a.vocab }.toDouble() / currentWordSet.size
+                    (ratio * 350).toLong()
+                }
                 // Length similarity to the tag group's average note length.
                 val avgLen = if (a.count > 0) a.totalLen / a.count else 0L
                 val lengthScore = if (avgLen == 0L || currentLen == 0L) 0L else {
                     val diff = kotlin.math.abs(currentLen - avgLen).toDouble() / maxOf(currentLen, avgLen)
-                    (40 * (1.0 - diff.coerceIn(0.0, 1.0))).toLong()
+                    (25 * (1.0 - diff.coerceIn(0.0, 1.0))).toLong()
                 }
-                val groupScore = a.count.toLong() * 10
+                // Popularity on a log scale so a tag used in 4000 notes doesn't swamp one in 40.
+                val groupScore = (kotlin.math.log10(a.count.toDouble() + 1) * 20).toLong().coerceAtMost(60)
                 val ageDays = (now - a.lastUsedMillis) / 86_400_000L
-                val recencyScore = (100 * (1.0 - (ageDays / 30.0).coerceIn(0.0, 1.0))).toLong()
+                val recencyScore = (50 * (1.0 - (ageDays / 30.0).coerceIn(0.0, 1.0))).toLong()
                 val total = mentionScore + overlapScore + lengthScore + groupScore + recencyScore
                 HashtagSuggestion(
                     tag = a.display, noteCount = a.count, score = total.toInt(),
