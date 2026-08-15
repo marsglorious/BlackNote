@@ -104,12 +104,11 @@ fun EditorScreen(state: UiState, viewModel: AppViewModel, onBack: () -> Unit) {
                         .toSet()
                 }
                 HashtagPickerPanel(
-                    existingTags = state.hashtagPickerExisting,
-                    currentInNote = currentInNote,
                     suggestions = state.hashtagSuggestions,
+                    currentInNote = currentInNote,
                     showScoreDetails = state.showHashtagScoreDetails,
-                    onToggle = { viewModel.toggleHashtag(it) },
-                    onPickSuggestion = { viewModel.insertHashtag(it) },
+                    onTap = { viewModel.toggleHashtag(it) },
+                    onPickNew = { viewModel.insertHashtag(it) },
                     onDismiss = { viewModel.closeHashtagPicker() },
                 )
             }
@@ -218,12 +217,11 @@ private fun BodyField(value: TextFieldValue, onChange: (TextFieldValue) -> Unit,
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HashtagPickerPanel(
-    existingTags: List<String>,
-    currentInNote: Set<String>,
     suggestions: List<HashtagSuggestion>,
+    currentInNote: Set<String>,
     showScoreDetails: Boolean,
-    onToggle: (String) -> Unit,
-    onPickSuggestion: (String) -> Unit,
+    onTap: (String) -> Unit,
+    onPickNew: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(true) }
@@ -231,9 +229,6 @@ private fun HashtagPickerPanel(
     var newTagText by remember { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
     val halfScreen = (LocalConfiguration.current.screenHeightDp / 2).dp
-    val existingSet = existingTags.map { it.lowercase() }.toHashSet()
-    val filteredSuggestions = suggestions.filter { it.tag.lowercase() !in existingSet }
-    val totalCount = existingTags.size + filteredSuggestions.size
 
     LaunchedEffect(showNewTagInput) {
         if (showNewTagInput) { delay(60); focusRequester.requestFocus() }
@@ -254,8 +249,8 @@ private fun HashtagPickerPanel(
                 color = MdColors.OnSurfaceDim,
                 modifier = Modifier.weight(1f),
             )
-            if (totalCount > 0) {
-                Text("$totalCount", fontSize = 11.sp, color = MdColors.OnSurfaceFaint, modifier = Modifier.padding(end = 2.dp))
+            if (suggestions.isNotEmpty()) {
+                Text("${suggestions.size}", fontSize = 11.sp, color = MdColors.OnSurfaceFaint, modifier = Modifier.padding(end = 2.dp))
             }
             TextButton(
                 onClick = { showNewTagInput = !showNewTagInput; if (!showNewTagInput) newTagText = ""; expanded = true },
@@ -316,7 +311,7 @@ private fun HashtagPickerPanel(
                         TextButton(
                             onClick = {
                                 val tag = newTagText.trim()
-                                if (tag.isNotBlank()) { onPickSuggestion(tag); newTagText = ""; showNewTagInput = false }
+                                if (tag.isNotBlank()) { onPickNew(tag); newTagText = ""; showNewTagInput = false }
                             },
                             enabled = newTagText.isNotBlank(),
                         ) {
@@ -329,8 +324,7 @@ private fun HashtagPickerPanel(
                     HorizontalDivider(color = MdColors.Divider, thickness = 1.dp)
                 }
 
-                // Unified chip grid — existing-origin chips (glow when in note) then suggestions
-                if (filteredSuggestions.isEmpty() && existingTags.isEmpty()) {
+                if (suggestions.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxWidth().height(72.dp),
                         contentAlignment = Alignment.Center,
@@ -351,15 +345,12 @@ private fun HashtagPickerPanel(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            for (tag in existingTags) {
-                                ExistingTagChip(
-                                    tag = tag,
-                                    active = tag.lowercase() in currentInNote,
-                                    onToggle = { onToggle(tag) },
-                                )
+                            // Glowing (in-note) chips come first so they're always visible at the top
+                            for (s in suggestions.filter { it.tag.lowercase() in currentInNote }) {
+                                HashtagChip(s, showScoreDetails, isActive = true, onTap = onTap)
                             }
-                            for (s in filteredSuggestions) {
-                                HashtagChip(s, showScoreDetails, onPickSuggestion)
+                            for (s in suggestions.filter { it.tag.lowercase() !in currentInNote }) {
+                                HashtagChip(s, showScoreDetails, isActive = false, onTap = onTap)
                             }
                         }
                     }
@@ -370,65 +361,38 @@ private fun HashtagPickerPanel(
 }
 
 @Composable
-private fun ExistingTagChip(tag: String, active: Boolean, onToggle: () -> Unit) {
-    val color = MdColors.hashtagColor(tag)
-    val shape = RoundedCornerShape(10.dp)
-    if (active) {
-        Box(
-            Modifier
-                .clip(shape)
-                .background(Brush.verticalGradient(listOf(color.copy(alpha = 0.92f), color.copy(alpha = 0.70f))))
-                .border(1.5.dp, color, shape)
-                .clickable { onToggle() }
-                .padding(horizontal = 11.dp, vertical = 7.dp),
-        ) {
-            Text("#$tag", color = MdColors.Background, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-        }
-    } else {
-        // Removed from note — dim, same visual weight as a suggestion
-        Box(
-            Modifier
-                .clip(shape)
-                .background(Brush.verticalGradient(listOf(color.copy(alpha = 0.38f), color.copy(alpha = 0.18f))))
-                .border(1.dp, color.copy(alpha = 0.38f), shape)
-                .clickable { onToggle() }
-                .padding(horizontal = 11.dp, vertical = 7.dp),
-        ) {
-            Text("#$tag", color = color.copy(alpha = 0.80f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-        }
-    }
-}
-
-@Composable
 private fun HashtagChip(
     s: HashtagSuggestion,
     showScoreDetails: Boolean,
-    onPick: (String) -> Unit,
+    isActive: Boolean,
+    onTap: (String) -> Unit,
 ) {
     val color = MdColors.hashtagColor(s.tag)
     val shape = RoundedCornerShape(10.dp)
+    val bgTop = if (isActive) color.copy(alpha = 0.92f) else color.copy(alpha = 0.50f)
+    val bgBot = if (isActive) color.copy(alpha = 0.70f) else color.copy(alpha = 0.26f)
+    val borderColor = if (isActive) color else color.copy(alpha = 0.50f)
+    val borderWidth = if (isActive) 1.5.dp else 1.dp
+    val textColor = if (isActive) MdColors.Background else color
+    val subColor = if (isActive) MdColors.Background.copy(alpha = 0.75f) else color.copy(alpha = 0.80f)
     Box(
         Modifier
             .clip(shape)
-            .background(
-                Brush.verticalGradient(
-                    listOf(color.copy(alpha = 0.50f), color.copy(alpha = 0.26f))
-                )
-            )
-            .border(1.dp, color.copy(alpha = 0.50f), shape)
-            .clickable { onPick(s.tag) }
+            .background(Brush.verticalGradient(listOf(bgTop, bgBot)))
+            .border(borderWidth, borderColor, shape)
+            .clickable { onTap(s.tag) }
             .padding(horizontal = 11.dp, vertical = 8.dp),
     ) {
         Column {
-            Text("#${s.tag}", color = color, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text("#${s.tag}", color = textColor, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             Text(
                 "${s.noteCount} ${if (s.noteCount == 1) "note" else "notes"}  ·  ★${s.score}",
-                color = color.copy(alpha = 0.80f),
+                color = subColor,
                 fontSize = 10.sp,
             )
             if (showScoreDetails) {
                 Spacer(Modifier.height(4.dp))
-                HorizontalDivider(color = color.copy(alpha = 0.25f), thickness = 1.dp)
+                HorizontalDivider(color = borderColor.copy(alpha = 0.25f), thickness = 1.dp)
                 Spacer(Modifier.height(3.dp))
                 ScoreRow("mentions", s.scoreMentions, "Tag words (or synonyms) found in this note — title hits count 5×, body 1×", color)
                 ScoreRow("overlap", s.scoreOverlap, "Rare words this note shares with tagged notes — uncommon words count more than common ones", color)

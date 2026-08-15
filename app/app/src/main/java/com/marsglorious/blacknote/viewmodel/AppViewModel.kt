@@ -29,7 +29,7 @@ import kotlin.time.Duration.Companion.milliseconds
 
 enum class Screen { LIST, EDITOR, TRASH, SETTINGS }
 
-data class UpdateInfo(val version: String, val build: String, val url: String)
+data class UpdateInfo(val version: String, val url: String)
 enum class ListViewMode { LIST, COLLAGE }
 enum class EditorMode { EDIT, RENDER }
 
@@ -135,8 +135,6 @@ data class UiState(
     val hashtagPickerOpen: Boolean = false,
     /** Ranked hashtag suggestions for the current note; populated when [hashtagPickerOpen] = true. */
     val hashtagSuggestions: List<HashtagSuggestion> = emptyList(),
-    /** Tags already in the note when the picker opened — drives the "In this note" section. */
-    val hashtagPickerExisting: List<String> = emptyList(),
     /** When true, each suggestion chip shows the per-component score breakdown. */
     val showHashtagScoreDetails: Boolean = false,
 )
@@ -210,11 +208,11 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
             try {
                 val text = java.net.URL("https://georealms.net/downloads/latest.json").readText()
                 val json = org.json.JSONObject(text)
-                val build = json.getString("build")
+                val versionCode = json.getInt("versionCode")
                 val version = json.getString("version")
                 val url = json.getString("url")
-                if (build.isNotBlank() && build != com.marsglorious.blacknote.BuildConfig.GIT_HASH) {
-                    _ui.update { it.copy(pendingUpdate = UpdateInfo(version, build, url)) }
+                if (versionCode > com.marsglorious.blacknote.BuildConfig.VERSION_CODE) {
+                    _ui.update { it.copy(pendingUpdate = UpdateInfo(version, url)) }
                 }
             } catch (_: Exception) { }
         }
@@ -1159,19 +1157,13 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
     }
     fun dismissSelfTests() { _ui.update { it.copy(selfTestResults = null) } }
 
-    /** Open the hashtag picker: rank suggestions from tags used across the whole tree. */
+    /** Open the hashtag picker: rank all known tags by relevance (including those already in the note). */
     fun openHashtagPicker() {
         val s = _ui.value
         val body = s.editingBody.text
         val title = s.editingTitle.text
-        val tagRegex = Regex("""(?<![a-zA-Z0-9_])#([a-zA-Z][a-zA-Z0-9_\-/]*)""")
-        val existingList = tagRegex.findAll("$body $title")
-            .map { it.groupValues[1] }
-            .distinctBy { it.lowercase() }
-            .toList()
-        val existingLower = existingList.map { it.lowercase() }.toHashSet()
-        val suggestions = rankHashtagSuggestions(s.tree.notes, body, title, existingLower)
-        _ui.update { it.copy(hashtagPickerOpen = true, hashtagSuggestions = suggestions, hashtagPickerExisting = existingList) }
+        val suggestions = rankHashtagSuggestions(s.tree.notes, body, title, emptySet())
+        _ui.update { it.copy(hashtagPickerOpen = true, hashtagSuggestions = suggestions) }
     }
 
     /**
@@ -1289,7 +1281,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         text.lowercase().split(Regex("[^a-z0-9_/-]+")).filter { it.length >= 3 }
 
     fun closeHashtagPicker() {
-        _ui.update { it.copy(hashtagPickerOpen = false, hashtagPickerExisting = emptyList()) }
+        _ui.update { it.copy(hashtagPickerOpen = false, hashtagSuggestions = emptyList()) }
     }
 
     /**
@@ -1311,13 +1303,15 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         )
         history.record(EditorSnapshot(_ui.value.editingTitle, next))
         val tagLower = tag.lowercase()
-        val newExisting = _ui.value.hashtagPickerExisting.let { ex ->
-            if (ex.any { it.lowercase() == tagLower }) ex else ex + tag
+        val newSuggestions = if (_ui.value.hashtagSuggestions.any { it.tag.lowercase() == tagLower }) {
+            _ui.value.hashtagSuggestions
+        } else {
+            _ui.value.hashtagSuggestions + HashtagSuggestion(tag = tag, noteCount = 1, score = 0)
         }
         _ui.update { it.copy(
             editingBody = next,
             canUndo = history.canUndo, canRedo = history.canRedo,
-            hashtagPickerExisting = newExisting,
+            hashtagSuggestions = newSuggestions,
         ) }
         scheduleSave()
     }
