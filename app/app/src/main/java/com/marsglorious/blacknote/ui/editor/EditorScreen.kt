@@ -29,6 +29,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -223,21 +227,24 @@ private fun HashtagPickerPanel(
     onDismiss: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(true) }
+    var showNewTagInput by remember { mutableStateOf(false) }
+    var newTagText by remember { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
     val halfScreen = (LocalConfiguration.current.screenHeightDp / 2).dp
     val existingSet = existingTags.map { it.lowercase() }.toHashSet()
     val filteredSuggestions = suggestions.filter { it.tag.lowercase() !in existingSet }
     val totalCount = existingTags.size + filteredSuggestions.size
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MdColors.SurfaceHi2),
-    ) {
+    LaunchedEffect(showNewTagInput) {
+        if (showNewTagInput) { delay(60); focusRequester.requestFocus() }
+    }
+
+    Column(Modifier.fillMaxWidth().background(MdColors.SurfaceHi2)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable { expanded = !expanded }
-                .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                .padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -248,12 +255,14 @@ private fun HashtagPickerPanel(
                 modifier = Modifier.weight(1f),
             )
             if (totalCount > 0) {
-                Text(
-                    "$totalCount",
-                    fontSize = 11.sp,
-                    color = MdColors.OnSurfaceFaint,
-                    modifier = Modifier.padding(end = 6.dp),
-                )
+                Text("$totalCount", fontSize = 11.sp, color = MdColors.OnSurfaceFaint, modifier = Modifier.padding(end = 2.dp))
+            }
+            TextButton(
+                onClick = { showNewTagInput = !showNewTagInput; if (!showNewTagInput) newTagText = ""; expanded = true },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                modifier = Modifier.height(34.dp),
+            ) {
+                Text("+ new #", fontSize = 11.sp, color = MdColors.Accent, fontWeight = FontWeight.Medium)
             }
             Icon(
                 if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
@@ -263,12 +272,7 @@ private fun HashtagPickerPanel(
             )
             Spacer(Modifier.width(4.dp))
             IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
-                Icon(
-                    Icons.Outlined.Close,
-                    contentDescription = "Close hashtag picker",
-                    tint = MdColors.OnSurfaceDim,
-                    modifier = Modifier.size(18.dp),
-                )
+                Icon(Icons.Outlined.Close, "Close hashtag picker", tint = MdColors.OnSurfaceDim, modifier = Modifier.size(18.dp))
             }
         }
 
@@ -280,73 +284,80 @@ private fun HashtagPickerPanel(
             Column {
                 HorizontalDivider(color = MdColors.Divider, thickness = 1.dp)
 
-                // "In this note" section — tags already present when picker opened.
-                if (existingTags.isNotEmpty()) {
-                    Text(
-                        "IN THIS NOTE",
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MdColors.OnSurfaceFaint,
-                        modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 2.dp),
-                    )
-                    FlowRow(
+                // Inline new-tag input
+                if (showNewTagInput) {
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                            .background(MdColors.SurfaceHi)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        for (tag in existingTags) {
-                            ExistingTagChip(
-                                tag = tag,
-                                active = tag.lowercase() in currentInNote,
-                                onToggle = { onToggle(tag) },
-                            )
+                        Text("#", color = MdColors.Accent, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.width(4.dp))
+                        BasicTextField(
+                            value = newTagText,
+                            onValueChange = { raw ->
+                                newTagText = raw.lowercase()
+                                    .filter { it.isLetterOrDigit() || it == '_' || it == '-' || it == '/' }
+                            },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = MdColors.OnSurface),
+                            cursorBrush = SolidColor(MdColors.Accent),
+                            modifier = Modifier.weight(1f).focusRequester(focusRequester),
+                            decorationBox = { inner ->
+                                Box {
+                                    if (newTagText.isEmpty()) Text("type a tag name…", color = MdColors.OnSurfaceFaint, fontSize = 14.sp)
+                                    inner()
+                                }
+                            },
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        TextButton(
+                            onClick = {
+                                val tag = newTagText.trim()
+                                if (tag.isNotBlank()) { onPickSuggestion(tag); newTagText = ""; showNewTagInput = false }
+                            },
+                            enabled = newTagText.isNotBlank(),
+                        ) {
+                            Text("Add", color = if (newTagText.isNotBlank()) MdColors.Accent else MdColors.OnSurfaceFaint, fontSize = 13.sp)
+                        }
+                        TextButton(onClick = { newTagText = ""; showNewTagInput = false }) {
+                            Text("Cancel", color = MdColors.OnSurfaceDim, fontSize = 12.sp)
                         }
                     }
                     HorizontalDivider(color = MdColors.Divider, thickness = 1.dp)
                 }
 
-                // Suggestions section.
+                // Unified chip grid — existing-origin chips (glow when in note) then suggestions
                 if (filteredSuggestions.isEmpty() && existingTags.isEmpty()) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(72.dp),
+                        modifier = Modifier.fillMaxWidth().height(72.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            "No hashtags yet — add #tags to your notes first",
+                            "No hashtags yet — tap \"+ new #\" to create one",
                             fontSize = 12.sp,
                             color = MdColors.OnSurfaceDim,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.padding(horizontal = 24.dp),
                         )
                     }
-                } else if (filteredSuggestions.isNotEmpty()) {
-                    if (existingTags.isNotEmpty()) {
-                        Text(
-                            "SUGGESTIONS",
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MdColors.OnSurfaceFaint,
-                            modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 2.dp),
-                        )
-                    }
+                } else {
                     val chipScroll = rememberScrollState()
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = halfScreen),
-                    ) {
+                    Box(Modifier.fillMaxWidth().heightIn(max = halfScreen)) {
                         FlowRow(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(chipScroll)
-                                .padding(10.dp),
+                            modifier = Modifier.fillMaxWidth().verticalScroll(chipScroll).padding(10.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
+                            for (tag in existingTags) {
+                                ExistingTagChip(
+                                    tag = tag,
+                                    active = tag.lowercase() in currentInNote,
+                                    onToggle = { onToggle(tag) },
+                                )
+                            }
                             for (s in filteredSuggestions) {
                                 HashtagChip(s, showScoreDetails, onPickSuggestion)
                             }
@@ -362,19 +373,29 @@ private fun HashtagPickerPanel(
 private fun ExistingTagChip(tag: String, active: Boolean, onToggle: () -> Unit) {
     val color = MdColors.hashtagColor(tag)
     val shape = RoundedCornerShape(10.dp)
-    val bgTop = if (active) color.copy(alpha = 0.85f) else color.copy(alpha = 0.22f)
-    val bgBot = if (active) color.copy(alpha = 0.65f) else color.copy(alpha = 0.10f)
-    val borderAlpha = if (active) 1.0f else 0.28f
-    val textAlpha = if (active) 1.0f else 0.40f
-    Box(
-        Modifier
-            .clip(shape)
-            .background(Brush.verticalGradient(listOf(bgTop, bgBot)))
-            .border(if (active) 1.5.dp else 1.dp, color.copy(alpha = borderAlpha), shape)
-            .clickable { onToggle() }
-            .padding(horizontal = 11.dp, vertical = 7.dp),
-    ) {
-        Text("#$tag", color = color.copy(alpha = textAlpha), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+    if (active) {
+        Box(
+            Modifier
+                .clip(shape)
+                .background(Brush.verticalGradient(listOf(color.copy(alpha = 0.92f), color.copy(alpha = 0.70f))))
+                .border(1.5.dp, color, shape)
+                .clickable { onToggle() }
+                .padding(horizontal = 11.dp, vertical = 7.dp),
+        ) {
+            Text("#$tag", color = MdColors.Background, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+    } else {
+        // Removed from note — dim, same visual weight as a suggestion
+        Box(
+            Modifier
+                .clip(shape)
+                .background(Brush.verticalGradient(listOf(color.copy(alpha = 0.38f), color.copy(alpha = 0.18f))))
+                .border(1.dp, color.copy(alpha = 0.38f), shape)
+                .clickable { onToggle() }
+                .padding(horizontal = 11.dp, vertical = 7.dp),
+        ) {
+            Text("#$tag", color = color.copy(alpha = 0.80f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 
