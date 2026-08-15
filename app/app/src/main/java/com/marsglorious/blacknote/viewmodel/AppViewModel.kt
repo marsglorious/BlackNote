@@ -1557,6 +1557,52 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         internal fun synonymStemsOf(stemmedWord: String): Set<String> =
             SYNONYM_INDEX[stemmedWord] ?: emptySet()
 
+        // Build pattern from char values to avoid source-encoding issues.
+        private val QUOTE_AUTHOR_REGEX: Regex by lazy {
+            val lq = 0x201c.toChar()
+            val rq = 0x201d.toChar()
+            val en = 0x2013.toChar()
+            val em = 0x2014.toChar()
+            val lo = 0x00c0.toChar()
+            val hi = 0x024f.toChar()
+            val q  = 0x0022.toChar()
+            val bs = 0x005c.toChar()
+            val p  = StringBuilder()
+            p.append('[').append(q).append(lq).append(']')
+            p.append('(').append('[').append('^').append(q).append(lq).append(rq).append(']').append("{10,}?)")
+            p.append('[').append(q).append(rq).append(']')
+            p.append('[').append(' ').append(bs).append('t').append(']').append('*')
+            p.append(bs).append('n').append('?')
+            p.append('[').append(' ').append(bs).append('t').append(']').append('*')
+            p.append('[').append('-').append(en).append(em).append(']')
+            p.append('[').append(' ').append(bs).append('t').append(']').append('*')
+            val nameChars = "[A-Z][a-zA-Z" + lo + '-' + hi + "'.,"
+            val nw = nameChars + bs + "-]*"
+            p.append("($nw(?:[ " + bs + "t]+$nw){0,4})")
+            Regex(p.toString())
+        }
+
+        /**
+         * Scan [body] for quoted text attributed to an author (`”...” - Name`) and return
+         * the hashtags to suggest: one CamelCase author tag plus `#quote`.
+         * Returns an empty list when no attributions are found.
+         */
+        fun detectQuoteTags(body: String): List<String> {
+            val authors = QUOTE_AUTHOR_REGEX.findAll(body)
+                .mapNotNull { m ->
+                    val name = m.groupValues[2].trim()
+                    if (name.length < 2) null else name
+                }
+                .distinct()
+                .toList()
+            if (authors.isEmpty()) return emptyList()
+            val authorTags = authors.map { name ->
+                name.split(Regex("\\s+"))
+                    .joinToString("") { word -> word.filter { it.isLetter() || it.isDigit() } }
+            }.filter { it.isNotBlank() }
+            return (authorTags + "quote").distinct()
+        }
+
         fun factory(app: App) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
