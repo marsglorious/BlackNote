@@ -1162,7 +1162,11 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         val s = _ui.value
         val body = s.editingBody.text
         val title = s.editingTitle.text
-        val suggestions = rankHashtagSuggestions(s.tree.notes, body, title, emptySet())
+        val tagRegex = Regex("""(?<![a-zA-Z0-9_])#([a-zA-Z][a-zA-Z0-9_\-/]*)""")
+        val existingLower = tagRegex.findAll("$body $title")
+            .map { it.groupValues[1].lowercase() }
+            .toHashSet()
+        val suggestions = rankHashtagSuggestions(s.tree.notes, body, title, emptySet(), alwaysInclude = existingLower)
         _ui.update { it.copy(hashtagPickerOpen = true, hashtagSuggestions = suggestions) }
     }
 
@@ -1183,6 +1187,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         body: String,
         title: String,
         excludeTags: Set<String>,
+        alwaysInclude: Set<String> = emptySet(),
         limit: Int = 20,
     ): List<HashtagSuggestion> {
         // --- Pass 1: build IDF table over all notes (stemmed) ---
@@ -1273,7 +1278,12 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                 )
             }
             .sortedByDescending { it.score }
-            .take(limit)
+            .let { sorted ->
+                if (alwaysInclude.isEmpty()) return@let sorted.take(limit)
+                val pinned = sorted.filter { it.tag.lowercase() in alwaysInclude }
+                val pinnedKeys = pinned.map { it.tag.lowercase() }.toHashSet()
+                pinned + sorted.filter { it.tag.lowercase() !in pinnedKeys }.take(limit)
+            }
     }
 
     /** Split text into lowercase word tokens (≥3 chars) for similarity/mention analysis. */
