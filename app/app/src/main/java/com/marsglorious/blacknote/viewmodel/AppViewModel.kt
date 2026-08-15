@@ -28,6 +28,8 @@ import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.milliseconds
 
 enum class Screen { LIST, EDITOR, TRASH, SETTINGS }
+
+data class UpdateInfo(val version: String, val build: String, val url: String)
 enum class ListViewMode { LIST, COLLAGE }
 enum class EditorMode { EDIT, RENDER }
 
@@ -126,6 +128,9 @@ data class UiState(
     val collageScrollOffset: Int = 0,
     /** Non-null while the self-test results dialog is showing. */
     val selfTestResults: List<com.marsglorious.blacknote.selftest.SelfTestResult>? = null,
+    /** Non-null when a newer build has been detected server-side and is ready to install. */
+    val pendingUpdate: UpdateInfo? = null,
+    val isDownloadingUpdate: Boolean = false,
     /** True while the hashtag suggestion picker row is visible above the format toolbar. */
     val hashtagPickerOpen: Boolean = false,
     /** Ranked hashtag suggestions for the current note; populated when [hashtagPickerOpen] = true. */
@@ -197,6 +202,86 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
             if (!hasFolder || needsPermission) return@launch
             loadNotesFromDiskAndCache(folderPath)
         }
+        checkForUpdate()
+    }
+
+    private fun checkForUpdate() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val text = java.net.URL("https://georealms.net/downloads/latest.json").readText()
+                val json = org.json.JSONObject(text)
+                val build = json.getString("build")
+                val version = json.getString("version")
+                val url = json.getString("url")
+                if (build.isNotBlank() && build != com.marsglorious.blacknote.BuildConfig.GIT_HASH) {
+                    _ui.update { it.copy(pendingUpdate = UpdateInfo(version, build, url)) }
+                }
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun dismissUpdate() {
+        _ui.update { it.copy(pendingUpdate = null) }
+    }
+
+    fun downloadAndInstallUpdate() {
+        val update = _ui.value.pendingUpdate ?: return
+        _ui.update { it.copy(isDownloadingUpdate = true) }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val dm = app.getSystemService(android.app.DownloadManager::class.java)
+                val destFile = java.io.File(
+                    app.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS),
+                    "blacknote-update.apk",
+                )
+                if (destFile.exists()) destFile.delete()
+                val request = android.app.DownloadManager.Request(android.net.Uri.parse(update.url))
+                    .setTitle("BlackNote ${update.version}")
+                    .setDescription("Downloading update…")
+                    .setDestinationInExternalFilesDir(
+                        app, android.os.Environment.DIRECTORY_DOWNLOADS, "blacknote-update.apk"
+                    )
+                    .setNotificationVisibility(
+                        android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                    )
+                val downloadId = dm.enqueue(request)
+                val query = android.app.DownloadManager.Query().setFilterById(downloadId)
+                while (true) {
+                    delay(1_000)
+                    val cursor = dm.query(query)
+                    if (!cursor.moveToFirst()) { cursor.close(); continue }
+                    val status = cursor.getInt(
+                        cursor.getColumnIndexOrThrow(android.app.DownloadManager.COLUMN_STATUS)
+                    )
+                    cursor.close()
+                    when (status) {
+                        android.app.DownloadManager.STATUS_SUCCESSFUL -> {
+                            _ui.update { it.copy(isDownloadingUpdate = false) }
+                            withContext(Dispatchers.Main) { launchInstaller(destFile) }
+                            return@launch
+                        }
+                        android.app.DownloadManager.STATUS_FAILED -> {
+                            _ui.update { it.copy(isDownloadingUpdate = false) }
+                            return@launch
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                _ui.update { it.copy(isDownloadingUpdate = false) }
+            }
+        }
+    }
+
+    private fun launchInstaller(apkFile: java.io.File) {
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            app, "${app.packageName}.fileprovider", apkFile
+        )
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+        }
+        app.startActivity(intent)
     }
 
     private suspend fun loadNotesFromDiskAndCache(folderPath: String) {

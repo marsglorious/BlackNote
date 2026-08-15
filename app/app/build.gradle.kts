@@ -4,6 +4,12 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val gitHash: String = try {
+    providers.exec {
+        commandLine("git", "rev-parse", "--short", "HEAD")
+    }.standardOutput.asText.get().trim()
+} catch (e: Exception) { "unknown" }
+
 android {
     namespace = "com.marsglorious.blacknote"
     compileSdk = 35
@@ -14,6 +20,7 @@ android {
         targetSdk = 35
         versionCode = 35
         versionName = "1.11.0"
+        buildConfigField("String", "GIT_HASH", "\"$gitHash\"")
         vectorDrawables { useSupportLibrary = true }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

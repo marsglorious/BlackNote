@@ -111,6 +111,15 @@ fun NoteListScreen(state: UiState, viewModel: AppViewModel, onGrantPermission: (
                 ManagePermissionScreen(onGrant = onGrantPermission)
                 return@Column
             }
+            if (state.pendingUpdate != null) {
+                UpdateBanner(
+                    version = state.pendingUpdate.version,
+                    isDownloading = state.isDownloadingUpdate,
+                    onInstall = { viewModel.downloadAndInstallUpdate() },
+                    onDismiss = { viewModel.dismissUpdate() },
+                )
+                Spacer(Modifier.height(6.dp))
+            }
             SearchBarWithMenu(
                 query = state.query,
                 onQuery = { viewModel.setQuery(it) },
@@ -680,6 +689,52 @@ private fun EmptyFolderState(onPick: () -> Unit) {
             colors = ButtonDefaults.buttonColors(containerColor = MdColors.Accent, contentColor = MdColors.Background),
             shape = RoundedCornerShape(14.dp),
         ) { Text("Choose folder") }
+    }
+}
+
+@Composable
+private fun UpdateBanner(
+    version: String,
+    isDownloading: Boolean,
+    onInstall: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MdColors.Accent.copy(alpha = 0.12f))
+            .border(1.dp, MdColors.Accent.copy(alpha = 0.30f), RoundedCornerShape(10.dp))
+            .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                "Update available",
+                color = MdColors.Accent,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+            )
+            Text(
+                "BlackNote $version is ready to install",
+                color = MdColors.OnSurfaceDim,
+                fontSize = 12.sp,
+            )
+        }
+        if (isDownloading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp).padding(end = 8.dp),
+                strokeWidth = 2.dp,
+                color = MdColors.Accent,
+            )
+        } else {
+            TextButton(onClick = onInstall) {
+                Text("Install", color = MdColors.Accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            }
+            IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Outlined.Close, "Dismiss update", tint = MdColors.OnSurfaceDim, modifier = Modifier.size(16.dp))
+            }
+        }
     }
 }
 
