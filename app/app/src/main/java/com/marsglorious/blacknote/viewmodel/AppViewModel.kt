@@ -1091,18 +1091,15 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
 
     /**
      * Rank hashtags collected from every note in the tree by relevance to the current note.
-     * Sourced from the in-memory tree — the same tags the list renders — rather than the DB
-     * index, so a tag added moments ago is suggestable immediately and the picker can't come
-     * up empty while the list plainly shows tags.
      *
-     * The importance score for each tag blends:
-     *  - **Mentions** (×200, cap 1000): how often the tag's word(s) appear in this note — the
-     *    primary relevance signal.
-     *  - **Vocabulary overlap** (0–350): fraction of this note's unique words that appear in any
-     *    note already carrying the tag. Normalized so mega-popular tags don't win just from
-     *    having a huge accumulated vocabulary.
-     *  - **Popularity** (log₁₀ scale, cap 60): minor tie-breaker.
-     *  - **Length similarity** (cap 25) and **recency** (cap 50): weak secondary signals.
+     * Algorithm (in order of weight):
+     *  1. **Mentions** (×200, cap 1000): stemmed tag words in title (×5 bonus) or body,
+     *     plus synonym matches at 40% credit. Primary signal.
+     *  2. **TF-IDF overlap** (0–350): IDF-weighted sum of current note stems that appear in the
+     *     tag group's combined vocabulary, normalised by note size. Rare shared words score more
+     *     than common ones; popular tags no longer win just from having huge vocabularies.
+     *  3. **Popularity** (log₁₀ scale, cap 60): minor tie-breaker.
+     *  4. **Length similarity** (cap 25) and **recency** (cap 50): weak signals.
      */
     private fun rankHashtagSuggestions(
         notes: List<Note>,
@@ -1111,18 +1108,27 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         excludeTags: Set<String>,
         limit: Int = 20,
     ): List<HashtagSuggestion> {
-        // Aggregate, per tag, the info needed to score: usage count, recency, the combined
-        // vocabulary of its notes, and their average length.
+        // --- Pass 1: build IDF table over all notes (stemmed) ---
+        val docFreq = HashMap<String, Int>()
+        for (n in notes) {
+            for (w in wordsOf(n.title + " " + n.preview).map { stem(it) }.toHashSet()) {
+                docFreq[w] = (docFreq[w] ?: 0) + 1
+            }
+        }
+        val totalDocs = notes.size.coerceAtLeast(1).toDouble()
+        fun idf(w: String) = kotlin.math.ln((totalDocs + 1.0) / ((docFreq[w] ?: 0).toDouble() + 1.0))
+
+        // --- Pass 2: per-tag aggregation with stemmed vocab ---
         class TagAgg(var display: String) {
             var count = 0
             var lastUsedMillis = 0L
-            val vocab = HashSet<String>()
+            val vocab = HashSet<String>()   // stemmed words from notes carrying this tag
             var totalLen = 0L
         }
         val agg = HashMap<String, TagAgg>()
         for (n in notes) {
             if (n.tags.isEmpty()) continue
-            val noteWords = wordsOf(n.title + " " + n.preview)
+            val noteStems = wordsOf(n.title + " " + n.preview).map { stem(it) }
             val noteLen = (n.title.length + n.preview.length).toLong()
             for (raw in n.tags) {
                 if (raw.isBlank()) continue
@@ -1130,44 +1136,55 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                 a.count++
                 if (n.modifiedMillis > a.lastUsedMillis) {
                     a.lastUsedMillis = n.modifiedMillis
-                    a.display = raw // keep the casing of the most recently used note
+                    a.display = raw
                 }
-                a.vocab.addAll(noteWords)
+                a.vocab.addAll(noteStems)
                 a.totalLen += noteLen
             }
         }
         if (agg.isEmpty()) return emptyList()
 
-        val currentText = "$body $title"
-        val currentWords = wordsOf(currentText)
-        val currentWordSet = currentWords.toHashSet()
-        val currentLen = currentText.length.toLong()
+        // --- Prepare current-note stems ---
+        val titleStems = wordsOf(title).map { stem(it) }
+        val bodyStems  = wordsOf(body).map  { stem(it) }
+        val currentStemSet = (titleStems + bodyStems).toHashSet()
+        val currentLen = (body.length + title.length).toLong()
         val now = System.currentTimeMillis()
 
         return agg.entries
             .filter { it.key !in excludeTags }
             .map { (key, a) ->
                 val tagWords = key.split(Regex("[^a-z0-9_/-]+")).filter { it.length >= 3 }
-                // Mentions: occurrences of the tag (or its sub-words) in the current note.
-                val mentions = currentWords.count { it == key } +
-                    tagWords.sumOf { tw -> currentWords.count { it == tw } }
-                val mentionScore = (mentions.toLong() * 200).coerceAtMost(1000)
-                // Overlap: fraction of this note's vocabulary present in the tag group's vocab.
-                // Using ratio (not raw count) prevents popular tags from winning via huge accumulated vocab.
-                val overlapScore = if (currentWordSet.isEmpty()) 0L else {
-                    val ratio = currentWordSet.count { it in a.vocab }.toDouble() / currentWordSet.size
-                    (ratio * 350).toLong()
+                val tagStemSet = (listOf(key) + tagWords).map { stem(it) }.toHashSet()
+                val tagSynStemSet = tagStemSet.flatMap { synonymStemsOf(it) }.toHashSet() - tagStemSet
+
+                // Mentions: title words count 5×; synonym hits count 40%.
+                val titleExact = titleStems.count { it in tagStemSet }
+                val bodyExact  = bodyStems.count  { it in tagStemSet }
+                val titleSyn   = titleStems.count { it in tagSynStemSet }
+                val bodySyn    = bodyStems.count  { it in tagSynStemSet }
+                val rawMentions = titleExact * 5.0 + bodyExact + (titleSyn * 5.0 + bodySyn) * 0.4
+                val mentionScore = (rawMentions * 200).toLong().coerceAtMost(1000)
+
+                // TF-IDF overlap: IDF-weighted shared stems, normalised by current note vocab size.
+                val tfidfSum = currentStemSet.sumOf { sw ->
+                    val hit = sw in a.vocab || synonymStemsOf(sw).any { it in a.vocab }
+                    if (hit) idf(sw) else 0.0
                 }
+                val overlapScore = (tfidfSum / maxOf(currentStemSet.size, 1).toDouble() * 350)
+                    .toLong().coerceAtMost(350)
+
                 // Length similarity to the tag group's average note length.
                 val avgLen = if (a.count > 0) a.totalLen / a.count else 0L
                 val lengthScore = if (avgLen == 0L || currentLen == 0L) 0L else {
                     val diff = kotlin.math.abs(currentLen - avgLen).toDouble() / maxOf(currentLen, avgLen)
                     (25 * (1.0 - diff.coerceIn(0.0, 1.0))).toLong()
                 }
-                // Popularity on a log scale so a tag used in 4000 notes doesn't swamp one in 40.
+
                 val groupScore = (kotlin.math.log10(a.count.toDouble() + 1) * 20).toLong().coerceAtMost(60)
                 val ageDays = (now - a.lastUsedMillis) / 86_400_000L
                 val recencyScore = (50 * (1.0 - (ageDays / 30.0).coerceIn(0.0, 1.0))).toLong()
+
                 val total = mentionScore + overlapScore + lengthScore + groupScore + recencyScore
                 HashtagSuggestion(
                     tag = a.display, noteCount = a.count, score = total.toInt(),
@@ -1293,6 +1310,163 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         const val PREF_PINNED = "ui_pinned_paths"
         const val PREF_SHOW_LOCATION = "ui_show_file_location"
         const val PREF_HASHTAG_SCORE_DETAILS = "ui_hashtag_score_details"
+
+        /**
+         * Lightweight suffix-stripping stemmer. Not a full Porter stemmer — just the most
+         * common English derivational and inflectional suffixes that matter for note topics.
+         * Applied consistently to both note words and the tag vocab so morphological variants
+         * (work / working / worked / workers) all map to the same root for comparison.
+         */
+        internal fun stem(word: String): String {
+            if (word.length < 5) return word
+            return when {
+                word.endsWith("izations") && word.length > 10 -> word.dropLast(8)
+                word.endsWith("isations") && word.length > 10 -> word.dropLast(8)
+                word.endsWith("ization")  && word.length >  9 -> word.dropLast(7)
+                word.endsWith("isation")  && word.length >  9 -> word.dropLast(7)
+                word.endsWith("nesses")   && word.length >  8 -> word.dropLast(6)
+                word.endsWith("ations")   && word.length >  8 -> word.dropLast(6)
+                word.endsWith("ments")    && word.length >  7 -> word.dropLast(5)
+                word.endsWith("ities")    && word.length >  7 -> word.dropLast(5)
+                word.endsWith("tions")    && word.length >  7 -> word.dropLast(5)
+                word.endsWith("ation")    && word.length >  7 -> word.dropLast(5)
+                word.endsWith("ness")     && word.length >  6 -> word.dropLast(4)
+                word.endsWith("ment")     && word.length >  6 -> word.dropLast(4)
+                word.endsWith("ings")     && word.length >  6 -> word.dropLast(4)
+                word.endsWith("ions")     && word.length >  6 -> word.dropLast(4)
+                word.endsWith("ity")      && word.length >  5 -> word.dropLast(3)
+                word.endsWith("ing")      && word.length >  5 -> word.dropLast(3)
+                word.endsWith("ion")      && word.length >  5 -> word.dropLast(3)
+                word.endsWith("ize")      && word.length >  5 -> word.dropLast(3)
+                word.endsWith("ise")      && word.length >  5 -> word.dropLast(3)
+                word.endsWith("ful")      && word.length >  5 -> word.dropLast(3)
+                word.endsWith("ers")      && word.length >  5 -> word.dropLast(3)
+                word.endsWith("er")       && word.length >  4 -> word.dropLast(2)
+                word.endsWith("ed")       && word.length >  4 -> word.dropLast(2)
+                word.endsWith("es")       && word.length >  4 -> word.dropLast(2)
+                word.endsWith("ly")       && word.length >  5 -> word.dropLast(2)
+                word.endsWith("s")        && word.length >  4 -> word.dropLast(1)
+                else -> word
+            }
+        }
+
+        /**
+         * Curated synonym clusters for common note-taking topics. Entries are unstemmed;
+         * [SYNONYM_INDEX] stems them at build time so lookups work on stemmed words.
+         */
+        private val SYNONYM_GROUPS: List<Set<String>> = listOf(
+            // Communication
+            setOf("email", "mail", "inbox", "message", "correspondence"),
+            setOf("meeting", "call", "sync", "standup", "conference", "discussion", "session", "huddle"),
+            setOf("chat", "message", "conversation", "talk", "discuss"),
+            setOf("present", "presentation", "demo", "talk", "speech", "lecture"),
+            setOf("report", "summary", "update", "status", "progress"),
+            setOf("publish", "share", "post", "distribute", "release", "broadcast"),
+            // Work / career
+            setOf("work", "job", "career", "employment", "profession", "occupation"),
+            setOf("task", "todo", "action", "assignment", "chore", "errand"),
+            setOf("project", "initiative", "program", "effort", "campaign"),
+            setOf("goal", "objective", "target", "aim", "milestone", "outcome", "purpose"),
+            setOf("deadline", "due", "timeline", "schedule"),
+            setOf("plan", "strategy", "roadmap", "outline", "agenda", "blueprint"),
+            setOf("team", "group", "squad", "crew", "colleagues", "staff"),
+            setOf("manager", "boss", "lead", "leadership", "supervisor"),
+            setOf("client", "customer", "stakeholder", "partner", "account"),
+            setOf("feedback", "review", "evaluation", "assessment", "appraisal"),
+            setOf("hire", "recruit", "interview", "candidate", "onboard"),
+            setOf("salary", "compensation", "pay", "wage", "income", "earnings"),
+            setOf("budget", "cost", "expense", "investment", "resource", "funding"),
+            setOf("process", "workflow", "procedure", "method", "approach"),
+            setOf("decision", "choice", "option", "alternative", "consideration"),
+            setOf("problem", "issue", "challenge", "obstacle", "difficulty", "blocker"),
+            setOf("solution", "fix", "resolve", "answer", "workaround", "remedy"),
+            setOf("idea", "thought", "concept", "notion", "insight", "inspiration", "brainstorm"),
+            setOf("note", "memo", "reminder", "annotation", "remark", "observation"),
+            setOf("document", "file", "record", "archive", "artifact"),
+            setOf("research", "study", "investigate", "explore", "analyze", "examine"),
+            setOf("learn", "understand", "master", "acquire", "grasp"),
+            setOf("change", "update", "modify", "revise", "improve", "enhance", "refine"),
+            // Technology / software
+            setOf("code", "coding", "programming", "develop", "software", "implementation"),
+            setOf("bug", "defect", "error", "issue", "glitch", "crash", "fault"),
+            setOf("feature", "functionality", "capability", "requirement"),
+            setOf("test", "testing", "verify", "validate", "check", "spec"),
+            setOf("deploy", "deployment", "release", "launch", "publish", "ship"),
+            setOf("refactor", "cleanup", "restructure", "improve", "optimize"),
+            setOf("design", "architecture", "structure", "pattern", "system"),
+            setOf("performance", "speed", "latency", "efficiency", "optimize"),
+            setOf("security", "authentication", "authorization", "permission", "access"),
+            setOf("data", "database", "storage", "persist", "record"),
+            setOf("api", "endpoint", "interface", "service", "integration"),
+            setOf("sprint", "iteration", "agile", "scrum", "cycle"),
+            setOf("ticket", "task", "card", "story"),
+            setOf("monitor", "log", "trace", "observe", "track", "metric"),
+            setOf("config", "configuration", "setup", "settings", "preference"),
+            setOf("documentation", "docs", "readme", "guide", "manual", "wiki"),
+            setOf("library", "dependency", "package", "module", "framework"),
+            setOf("mobile", "android", "ios", "phone"),
+            setOf("web", "website", "frontend", "browser", "page"),
+            setOf("server", "backend", "cloud", "infrastructure", "host"),
+            setOf("notification", "alert", "reminder", "event", "trigger"),
+            setOf("container", "docker", "kubernetes", "image"),
+            setOf("pipeline", "workflow", "automation", "process", "job"),
+            // Health / fitness
+            setOf("health", "wellness", "wellbeing", "medical", "fitness"),
+            setOf("exercise", "workout", "training", "sport", "activity", "gym"),
+            setOf("food", "meal", "eat", "diet", "nutrition", "cooking", "recipe"),
+            setOf("sleep", "rest", "recovery", "relax", "recharge", "nap"),
+            setOf("mental", "mind", "emotion", "feeling", "mood"),
+            setOf("stress", "anxiety", "worry", "overwhelm", "burnout"),
+            setOf("meditation", "mindfulness", "focus", "calm", "breathe"),
+            // Personal / life
+            setOf("family", "parent", "child", "home", "household"),
+            setOf("friend", "social", "relationship", "connection", "community"),
+            setOf("travel", "trip", "vacation", "holiday", "journey", "adventure"),
+            setOf("money", "finance", "financial", "budget", "saving", "investment"),
+            setOf("shopping", "buy", "purchase", "order", "acquire"),
+            setOf("home", "house", "apartment", "room", "space"),
+            setOf("hobby", "interest", "passion", "activity", "leisure"),
+            setOf("habit", "routine", "practice", "ritual", "discipline"),
+            setOf("journal", "diary", "reflection", "personal"),
+            setOf("gratitude", "appreciate", "thankful", "positive"),
+            setOf("motivation", "inspiration", "energy", "drive", "enthusiasm"),
+            setOf("event", "occasion", "celebration", "gathering"),
+            // Learning / education
+            setOf("study", "learn", "research", "explore", "investigate"),
+            setOf("read", "reading", "book", "article", "paper", "publication"),
+            setOf("course", "class", "lesson", "tutorial", "training", "workshop"),
+            setOf("skill", "ability", "competency", "expertise", "knowledge"),
+            setOf("summary", "review", "highlight", "takeaway"),
+            // Creative
+            setOf("write", "writing", "draft", "compose", "author", "create"),
+            setOf("design", "create", "build", "craft", "make"),
+            setOf("music", "song", "melody", "sound", "audio", "listen"),
+            setOf("art", "visual", "image", "graphic", "illustration"),
+            setOf("story", "narrative", "content", "creative"),
+            setOf("video", "film", "movie", "clip", "watch"),
+            setOf("photo", "image", "picture", "photograph", "shot"),
+            // Admin / misc
+            setOf("organize", "sort", "categorize", "structure", "arrange", "manage"),
+            setOf("search", "find", "look", "discover", "locate"),
+            setOf("link", "reference", "resource", "connection"),
+            setOf("delete", "remove", "clear", "clean", "archive"),
+            setOf("backup", "save", "preserve", "protect", "store"),
+        )
+
+        // Reverse index: stemmedWord → set of stemmed synonyms. Built once on first use.
+        private val SYNONYM_INDEX: Map<String, Set<String>> by lazy {
+            val stemmedGroups = SYNONYM_GROUPS.map { g -> g.map { stem(it) }.toSet() }
+            val map = HashMap<String, HashSet<String>>()
+            for (group in stemmedGroups) {
+                for (word in group) {
+                    map.getOrPut(word) { HashSet() }.addAll(group - word)
+                }
+            }
+            map
+        }
+
+        internal fun synonymStemsOf(stemmedWord: String): Set<String> =
+            SYNONYM_INDEX[stemmedWord] ?: emptySet()
 
         fun factory(app: App) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
