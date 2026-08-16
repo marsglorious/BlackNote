@@ -12,8 +12,8 @@ android {
         applicationId = "com.marsglorious.blacknote"
         minSdk = 26
         targetSdk = 35
-        versionCode = 36
-        versionName = "1.11.1"
+        versionCode = 37
+        versionName = "1.12.0"
         vectorDrawables { useSupportLibrary = true }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -22,7 +22,6 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.FormatQuote
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.HorizontalDivider
@@ -108,13 +107,12 @@ fun EditorScreen(state: UiState, viewModel: AppViewModel, onBack: () -> Unit) {
             }
             val pendingQuoteTags = quoteTags.filter { it.lowercase() !in currentInNote }
             val suggestionKey = if (pendingQuoteTags.isEmpty()) "" else pendingQuoteTags.sorted().joinToString(",")
-            var dismissedKey by remember { mutableStateOf("") }
-            if (pendingQuoteTags.isNotEmpty() && suggestionKey != dismissedKey) {
-                QuoteSuggestionBanner(
-                    tags = pendingQuoteTags,
-                    onAdd = { pendingQuoteTags.forEach { viewModel.toggleHashtag(it) } },
-                    onDismiss = { dismissedKey = suggestionKey },
-                )
+            var autoAddedKey by remember { mutableStateOf("") }
+            LaunchedEffect(suggestionKey) {
+                if (suggestionKey.isNotEmpty() && suggestionKey != autoAddedKey) {
+                    pendingQuoteTags.forEach { viewModel.toggleHashtag(it) }
+                    autoAddedKey = suggestionKey
+                }
             }
             if (state.hashtagPickerOpen) {
                 HashtagPickerPanel(
@@ -225,45 +223,6 @@ private fun BodyField(value: TextFieldValue, onChange: (TextFieldValue) -> Unit,
             }
         }
         EditorScrollIndicator(scroll, Modifier.align(Alignment.TopEnd))
-    }
-}
-
-@Composable
-private fun QuoteSuggestionBanner(tags: List<String>, onAdd: () -> Unit, onDismiss: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MdColors.SurfaceHi)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            Icons.Outlined.FormatQuote,
-            contentDescription = null,
-            tint = MdColors.Accent,
-            modifier = Modifier.size(15.dp),
-        )
-        Spacer(Modifier.width(5.dp))
-        for (tag in tags) {
-            Text(
-                "#$tag",
-                fontSize = 12.sp,
-                color = MdColors.Accent,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(end = 7.dp),
-            )
-        }
-        Spacer(Modifier.weight(1f))
-        TextButton(
-            onClick = onAdd,
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-            modifier = Modifier.height(28.dp),
-        ) {
-            Text("Add", fontSize = 12.sp, color = MdColors.Accent)
-        }
-        IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-            Icon(Icons.Outlined.Close, "Dismiss", tint = MdColors.OnSurfaceDim, modifier = Modifier.size(14.dp))
-        }
     }
 }
 
