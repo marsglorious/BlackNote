@@ -33,6 +33,7 @@ fun styleMarkdown(src: String): AnnotatedString = AnnotatedString.Builder().appl
     applyHashtags(src)
     applyWikiLinks(src)
     applyWebLinks(src)
+    applyBareUrls(src)
 }.toAnnotatedString()
 
 class MarkdownVisualTransformation : VisualTransformation {
@@ -146,6 +147,8 @@ private fun AnnotatedString.Builder.renderInline(line: String, onWikiLink: ((Str
                 consumeWiki(line, i, onWikiLink)?.let { i = it } ?: run { append(line[i]); i++ }
             line[i] == '[' ->
                 consumeWebLink(line, i)?.let { i = it } ?: run { append(line[i]); i++ }
+            line.startsWith("https://", i) || line.startsWith("http://", i) ->
+                consumeBareUrl(line, i)?.let { i = it } ?: run { append(line[i]); i++ }
             line[i] == '#' && (i == 0 || !line[i - 1].let { it.isLetterOrDigit() || it == '_' }) ->
                 consumeHashtag(line, i)?.let { i = it } ?: run { append(line[i]); i++ }
             line.startsWith("**", i) -> consumePair(line, i, "**",
@@ -454,6 +457,30 @@ private fun AnnotatedString.Builder.applyWebLinks(src: String) {
         addStyle(SpanStyle(color = MdColors.Accent, textDecoration = TextDecoration.Underline), ob + 1, cb)
         addStyle(SpanStyle(color = MdColors.OnSurfaceFaint), cb, cp + 1)
         i = cp + 1
+    }
+}
+
+private fun AnnotatedString.Builder.consumeBareUrl(line: String, i: Int): Int? {
+    if (!line.startsWith("https://", i) && !line.startsWith("http://", i)) return null
+    var end = i
+    while (end < line.length && !line[end].isWhitespace() && line[end] != '<' && line[end] != '>') end++
+    while (end > i && line[end - 1] in listOf('.', ',', ';', ':', '!', '?')) end--
+    if (end < i + 8) return null
+    val url = line.substring(i, end)
+    val start = length
+    pushLink(androidx.compose.ui.text.LinkAnnotation.Url(url))
+    append(url)
+    pop()
+    addStyle(SpanStyle(color = MdColors.Accent, textDecoration = TextDecoration.Underline), start, length)
+    return end
+}
+
+private fun AnnotatedString.Builder.applyBareUrls(src: String) {
+    val urlRegex = Regex("""https?://\S+""")
+    for (m in urlRegex.findAll(src)) {
+        var end = m.range.last + 1
+        while (end > m.range.first + 8 && src[end - 1] in listOf('.', ',', ';', ':', '!', '?')) end--
+        addStyle(SpanStyle(color = MdColors.Accent, textDecoration = TextDecoration.Underline), m.range.first, end)
     }
 }
 
