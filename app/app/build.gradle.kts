@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     id("org.jetbrains.kotlin.android")
     id("com.android.application")
@@ -12,7 +14,7 @@ android {
         applicationId = "com.marsglorious.blacknote"
         minSdk = 26
         targetSdk = 35
-        versionCode = 37
+        versionCode = 38
         versionName = "1.12.0"
         vectorDrawables { useSupportLibrary = true }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -70,6 +72,23 @@ android {
 }
 
 tasks.register("prepareKotlinBuildScriptModel") {}
+
+tasks.register("writeGitHash") {
+    outputs.upToDateWhen { false }
+    val outFile = layout.projectDirectory.file("src/main/assets/git_hash.txt").asFile.absolutePath
+    val repoRoot = rootDir.absolutePath
+    doLast {
+        val f = File(outFile)
+        f.parentFile.mkdirs()
+        val proc = ProcessBuilder(listOf("git", "rev-parse", "--short", "HEAD"))
+            .directory(File(repoRoot))
+            .redirectErrorStream(true)
+            .start()
+        val hash = proc.inputStream.bufferedReader().readLine()?.trim() ?: "unknown"
+        f.writeText(hash)
+    }
+}
+tasks.named("preBuild") { dependsOn("writeGitHash") }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")

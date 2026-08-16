@@ -21,3 +21,6 @@ crash.log
 
 # Android Studio backup files
 *.old
+
+# Generated at build time — do not commit
+app/app/src/main/assets/git_hash.txt
