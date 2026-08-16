@@ -110,6 +110,7 @@ fun EditorScreen(state: UiState, viewModel: AppViewModel, onBack: () -> Unit) {
             var autoAddedKey by remember { mutableStateOf("") }
             LaunchedEffect(suggestionKey) {
                 if (suggestionKey.isNotEmpty() && suggestionKey != autoAddedKey) {
+                    delay(600)  // debounce: cancel+restart on every keystroke, fire only after pause
                     pendingQuoteTags.forEach { viewModel.toggleHashtag(it) }
                     autoAddedKey = suggestionKey
                 }
