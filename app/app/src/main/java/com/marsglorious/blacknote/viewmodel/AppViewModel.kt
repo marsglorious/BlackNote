@@ -438,7 +438,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         quoteTagScanDone = true
         viewModelScope.launch {
             val tagRegex = Regex("""(?<![a-zA-Z0-9_])#([a-zA-Z][a-zA-Z0-9_\-/]*)""")
-            var patchCount = 0
+            val patched = mutableListOf<Note>()
             for (note in _ui.value.tree.notes) {
                 val body = repo.read(note.path) ?: continue
                 val existing = tagRegex.findAll(body).map { it.groupValues[1].lowercase() }.toHashSet()
@@ -452,9 +452,23 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                     "$trimmed\n\n$suffix "
                 }
                 repo.write(note.path, note.parent, newBody)
-                patchCount++
+                patched.add(note)
             }
-            if (patchCount > 0) refreshTree()
+            if (patched.isEmpty()) return@launch
+            // Re-enrich each patched note so updated tags appear in the listing immediately.
+            // A full refreshTree() won't help because scheduleEnrich() skips notes that
+            // already have a non-empty preview from the initial enrich pass.
+            val enriched = HashMap<String, Note>()
+            for (note in patched) {
+                enriched[note.path] = repo.enrichOne(note) ?: continue
+            }
+            _ui.update { s ->
+                val newNotes = s.tree.notes.map { n -> enriched[n.path] ?: n }
+                s.copy(
+                    tree = s.tree.copy(notes = newNotes),
+                    visibleNotes = orderedVisible(newNotes, s, s.tree.folders),
+                )
+            }
         }
     }
 
