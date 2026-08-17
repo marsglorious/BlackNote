@@ -102,19 +102,6 @@ fun EditorScreen(state: UiState, viewModel: AppViewModel, onBack: () -> Unit) {
                     .map { it.groupValues[1].lowercase() }
                     .toSet()
             }
-            val quoteTags = remember(state.editingBody.text) {
-                AppViewModel.detectQuoteTags(state.editingBody.text)
-            }
-            val pendingQuoteTags = quoteTags.filter { it.lowercase() !in currentInNote }
-            val suggestionKey = if (pendingQuoteTags.isEmpty()) "" else pendingQuoteTags.sorted().joinToString(",")
-            var autoAddedKey by remember { mutableStateOf("") }
-            LaunchedEffect(suggestionKey) {
-                if (suggestionKey.isNotEmpty() && suggestionKey != autoAddedKey) {
-                    delay(600)  // debounce: cancel+restart on every keystroke, fire only after pause
-                    pendingQuoteTags.forEach { viewModel.toggleHashtag(it) }
-                    autoAddedKey = suggestionKey
-                }
-            }
             if (state.hashtagPickerOpen) {
                 HashtagPickerPanel(
                     suggestions = state.hashtagSuggestions,

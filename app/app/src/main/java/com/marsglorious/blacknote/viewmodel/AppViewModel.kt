@@ -204,7 +204,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         checkForUpdate()
     }
 
-    private fun checkForUpdate() {
+    fun checkForUpdate() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val text = java.net.URL("https://georealms.net/downloads/latest.json").readText()
@@ -851,7 +851,19 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
         }
         // Detect real edits up front. Opening a note and closing it unchanged must not write
         // the file (that would bump its modified date and reorder the list) nor rename it.
-        val bodyChanged = bodyText != openedNoteBody
+        // Inject any missing quote hashtags into the body before saving so they land
+        // on disk in one write and appear immediately in the list — not during editing.
+        val tagRegex = Regex("""(?<![a-zA-Z0-9_])#([a-zA-Z][a-zA-Z0-9_\-/]*)""")
+        val existingTags = tagRegex.findAll(bodyText).map { it.groupValues[1].lowercase() }.toHashSet()
+        val missingQuoteTags = detectQuoteTags(bodyText).filter { it.lowercase() !in existingTags }
+        val finalBodyText = if (missingQuoteTags.isNotEmpty()) {
+            val trimmed = bodyText.trimEnd()
+            val suffix = missingQuoteTags.joinToString(" ") { "#$it" }
+            if (trimmed.substringAfterLast('\n').trimStart().startsWith("#")) "$trimmed $suffix "
+            else "$trimmed\n\n$suffix "
+        } else bodyText
+
+        val bodyChanged = finalBodyText != openedNoteBody
         val titleChanged = titleText != openedNoteTitle
         val isNewNote = path == pendingNewNotePath
         viewModelScope.launch {
@@ -863,13 +875,13 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                     return@launch
                 }
                 val wrote = if (bodyChanged) {
-                    runCatching { repo.write(path, parent, bodyText) }
+                    runCatching { repo.write(path, parent, finalBodyText) }
                         .onFailure { CrashReporter.report(app, "closeEditor.write.throw", it) }
                         .getOrDefault(false)
                 } else true
                 if (bodyChanged && !wrote) {
                     CrashReporter.report(app, "closeEditor.save",
-                        IllegalStateException("write returned false for $path bodyLen=${bodyText.length}"))
+                        IllegalStateException("write returned false for $path bodyLen=${finalBodyText.length}"))
                 }
                 val renamedUri: String? = if (wrote && titleChanged && titleText.isNotBlank()) {
                     // Blank title → leave the file name as-is (default "Untitled" notes open
