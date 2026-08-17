@@ -2,10 +2,13 @@ package com.marsglorious.blacknote.ui.list
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.DeleteForever
@@ -21,14 +24,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.marsglorious.blacknote.data.Note
+import com.marsglorious.blacknote.ui.editor.RenderView
 import com.marsglorious.blacknote.ui.theme.MdColors
 import com.marsglorious.blacknote.viewmodel.AppViewModel
 import com.marsglorious.blacknote.viewmodel.UiState
 
 @Composable
 fun TrashScreen(state: UiState, viewModel: AppViewModel) {
-    // System back must return to the list, not exit the app.
-    BackHandler { viewModel.backToList() }
+    // System back: dismiss viewer first, then return to list.
+    BackHandler {
+        if (state.trashViewerNote != null) viewModel.closeTrashViewer()
+        else viewModel.backToList()
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -62,12 +69,23 @@ fun TrashScreen(state: UiState, viewModel: AppViewModel) {
                 items(state.trashNotes, key = { it.path }) { note ->
                     TrashedCard(
                         note = note,
+                        onClick = { viewModel.openTrashViewer(note) },
                         onRestore = { viewModel.restoreFromTrash(note.path) },
                         onDelete = { viewModel.requestDeletePermanently(note.path) },
                     )
                 }
             }
         }
+    }
+
+    state.trashViewerNote?.let { note ->
+        TrashNoteViewer(
+            note = note,
+            body = state.trashViewerBody ?: "",
+            onClose = { viewModel.closeTrashViewer() },
+            onRestore = { viewModel.restoreFromTrash(note.path); viewModel.closeTrashViewer() },
+            onDelete = { viewModel.requestDeletePermanently(note.path); viewModel.closeTrashViewer() },
+        )
     }
 
     state.confirmDeleteForever?.let { uri ->
@@ -127,12 +145,13 @@ internal fun ConfirmDialog(
 }
 
 @Composable
-private fun TrashedCard(note: Note, onRestore: () -> Unit, onDelete: () -> Unit) {
+private fun TrashedCard(note: Note, onClick: () -> Unit, onRestore: () -> Unit, onDelete: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(MdColors.Surface)
+            .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
         Text(
@@ -143,13 +162,72 @@ private fun TrashedCard(note: Note, onRestore: () -> Unit, onDelete: () -> Unit)
         )
         if (note.preview.isNotBlank()) {
             Spacer(Modifier.height(4.dp))
-            Text(note.preview,
+            Text(
+                note.preview,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MdColors.OnSurfaceDim,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                maxLines = 5, overflow = TextOverflow.Ellipsis,
+            )
         }
         Spacer(Modifier.height(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onRestore) {
+                Icon(Icons.Outlined.Restore, null, tint = MdColors.Accent, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Restore", color = MdColors.Accent, fontWeight = FontWeight.Medium)
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onDelete) {
+                Icon(Icons.Outlined.DeleteForever, null, tint = MdColors.OnSurfaceDim, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Delete forever", color = MdColors.OnSurfaceDim, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrashNoteViewer(
+    note: Note,
+    body: String,
+    onClose: () -> Unit,
+    onRestore: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MdColors.Background)
+            .windowInsetsPadding(WindowInsets.systemBars),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onClose) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", tint = MdColors.OnSurface)
+            }
+            Text(
+                note.title.ifBlank { "Untitled" },
+                style = MaterialTheme.typography.titleMedium,
+                color = MdColors.OnSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+            )
+        }
+        HorizontalDivider(color = MdColors.Divider)
+        RenderView(
+            title = note.title.ifBlank { "Untitled" },
+            body = body,
+            modifier = Modifier.weight(1f),
+            onWikiLink = {},
+        )
+        HorizontalDivider(color = MdColors.Divider)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             TextButton(onClick = onRestore) {
                 Icon(Icons.Outlined.Restore, null, tint = MdColors.Accent, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))

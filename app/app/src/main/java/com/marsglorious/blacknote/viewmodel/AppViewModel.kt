@@ -102,6 +102,8 @@ data class UiState(
     val showFileLocation: Boolean = true,
     val pinned: Set<String> = emptySet(),
     val trashNotes: List<Note> = emptyList(),
+    val trashViewerNote: Note? = null,
+    val trashViewerBody: String? = null,
     val editingPath: String? = null,
     val editingParent: String = "",
     val editingTitle: TextFieldValue = TextFieldValue(""),
@@ -1150,6 +1152,17 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
             val notes = repo.refreshTrash()
             _ui.update { it.copy(trashNotes = notes) }
         }
+    }
+
+    fun openTrashViewer(note: Note) {
+        viewModelScope.launch {
+            val body = repo.read(note.path) ?: note.preview
+            _ui.update { it.copy(trashViewerNote = note, trashViewerBody = body) }
+        }
+    }
+
+    fun closeTrashViewer() {
+        _ui.update { it.copy(trashViewerNote = null, trashViewerBody = null) }
     }
 
     fun restoreFromTrash(noteUri: String) {
