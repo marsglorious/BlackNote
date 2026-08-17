@@ -158,6 +158,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
     private var refreshJob: Job? = null
     private var enrichJob: Job? = null
     private var searchJob: Job? = null
+    private var quoteTagScanDone = false
     // URIs the user has explicitly removed (deleted or moved) but the SAF walk may
     // still surface for a short while due to provider listing cache. mergeSnapshot
     // suppresses these so the deleted/moved note doesn't get resurrected into the UI.
@@ -381,6 +382,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                     )
                 }
                 scheduleEnrich()
+                scanAndPatchQuoteTags()
             } catch (t: kotlinx.coroutines.CancellationException) {
                 // Refresh was superseded by a newer one — not an error, don't log it.
                 throw t
@@ -428,6 +430,31 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
                     }
                 }
             }
+        }
+    }
+
+    private fun scanAndPatchQuoteTags() {
+        if (quoteTagScanDone) return
+        quoteTagScanDone = true
+        viewModelScope.launch {
+            val tagRegex = Regex("""(?<![a-zA-Z0-9_])#([a-zA-Z][a-zA-Z0-9_\-/]*)""")
+            var patchCount = 0
+            for (note in _ui.value.tree.notes) {
+                val body = repo.read(note.path) ?: continue
+                val existing = tagRegex.findAll(body).map { it.groupValues[1].lowercase() }.toHashSet()
+                val needed = detectQuoteTags(body).filter { it.lowercase() !in existing }
+                if (needed.isEmpty()) continue
+                val trimmed = body.trimEnd()
+                val suffix = needed.joinToString(" ") { "#$it" }
+                val newBody = if (trimmed.substringAfterLast('\n').trimStart().startsWith("#")) {
+                    "$trimmed $suffix "
+                } else {
+                    "$trimmed\n\n$suffix "
+                }
+                repo.write(note.path, note.parent, newBody)
+                patchCount++
+            }
+            if (patchCount > 0) refreshTree()
         }
     }
 
@@ -1569,7 +1596,7 @@ class AppViewModel(private val app: App, private val repo: NoteRepository) : Vie
             val bs = 0x005c.toChar()
             val p  = StringBuilder()
             p.append('[').append(q).append(lq).append(']')
-            p.append('(').append('[').append('^').append(q).append(lq).append(rq).append(']').append("{10,}?)")
+            p.append('(').append('[').append('^').append(q).append(lq).append(rq).append(']').append("{2,}?)")
             p.append('[').append(q).append(rq).append(']')
             p.append('[').append(' ').append(bs).append('t').append(']').append('*')
             p.append(bs).append('n').append('?')

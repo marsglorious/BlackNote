@@ -33,6 +33,29 @@ import com.marsglorious.blacknote.viewmodel.Screen
 class MainActivity : ComponentActivity() {
     private val viewModel: AppViewModel by viewModels { AppViewModel.factory(application as App) }
 
+    // Launched when the user taps "Open Settings" on the permission screen.
+    // Returns after the user navigates back from the All Files Access settings page.
+    private val manageStorageLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { viewModel.onPermissionGranted() }
+
+    // Android 10 fallback: runtime WRITE_EXTERNAL_STORAGE request.
+    private val legacyStorageLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) viewModel.onPermissionGranted() }
+
+    private fun launchStoragePermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            val intent = android.content.Intent(
+                android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                android.net.Uri.parse("package:$packageName"),
+            )
+            manageStorageLauncher.launch(intent)
+        } else {
+            legacyStorageLauncher.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -82,7 +105,7 @@ class MainActivity : ComponentActivity() {
                                 onBack = { viewModel.closeEditor() })
                             Screen.TRASH    -> TrashScreen(state = ui, viewModel = viewModel)
                             Screen.SETTINGS -> SettingsScreen(viewModel = viewModel)
-                            Screen.LIST     -> NoteListScreen(state = ui, viewModel = viewModel)
+                            Screen.LIST     -> NoteListScreen(state = ui, viewModel = viewModel, onGrantPermission = { launchStoragePermission() })
                         }
                     }
                 }

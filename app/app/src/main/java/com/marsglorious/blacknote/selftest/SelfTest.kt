@@ -401,9 +401,15 @@ object SelfTest {
             require("MahatmaGandhi" in tags) { "missing author tag, got: $tags" }
         })
 
-        add(check("Quote: short quote (<10 chars) not detected") {
-            val tags = AppViewModel.detectQuoteTags("\"Short\" - Someone")
-            require(tags.isEmpty()) { "short quote should produce no tags, got: $tags" }
+        add(check("Quote: short quote detected (our dog - Einstein)") {
+            val tags = AppViewModel.detectQuoteTags("\"our dog\" - Albert Einstein")
+            require("AlbertEinstein" in tags) { "missing author tag, got: $tags" }
+            require("quote" in tags) { "missing #quote, got: $tags" }
+        })
+
+        add(check("Quote: single-char quote not detected") {
+            val tags = AppViewModel.detectQuoteTags("\"x\" - Someone")
+            require(tags.isEmpty()) { "1-char quote should produce no tags, got: $tags" }
         })
 
         add(check("Quote: lowercase-only attribution not detected") {
